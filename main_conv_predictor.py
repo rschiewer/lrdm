@@ -1,16 +1,6 @@
 from predictors import *
-from replay_memory_tools import extract_subtrajectories, trajectory_video, load_env_samples
-from vae import *
 #from vq_vae import *
 from keras_vq_vae import VectorQuantizerEMAKeras
-from blockworld import *
-from tensorflow.keras import layers
-from sklearn.cluster import KMeans
-from sklearn.metrics import davies_bouldin_score
-import gym
-import os
-import sksfa
-from sklearn.preprocessing import PolynomialFeatures
 from replay_memory_tools import *
 from matplotlib import pyplot as plt
 
@@ -31,7 +21,6 @@ if gpus:
 def vq_vae_net(n_embeddings, d_embeddings, train_data_var, frame_stack=1):
     assert frame_stack == 1, 'No frame stacking supported currently'
     vae = VectorQuantizerEMAKeras(train_data_var, num_embeddings=n_embeddings, embedding_dim=d_embeddings)
-    #vae = VqVAE(obs_shape, num_latent_k, latent_size, frame_stack=frame_stack, beta=1, kl_loss_factor_mul=1.000001)
     vae.compile(optimizer=tf.optimizers.Adam())
     return vae
 
@@ -106,15 +95,6 @@ def load_vae_weights(vae, test_memory, file_name, plots=False):
         plt.show()
 
 
-def test_vae(vae, memories):
-    all_observations = np.concatenate([np.append(mem['s'], mem['s_'][np.newaxis, -1], axis=0) for mem in memories], axis=0) / 255
-    reconstructed = np.clip(vae.predict(all_observations), 0, 1)
-
-    diff = np.abs(all_observations - reconstructed)
-    plt.plot(diff.mean(axis=(1, 2, 3)))
-    plt.show()
-
-
 def gen_predictor_nets(vae, n_actions, num_heads):
     state_shape = vae.latent_shape
     per_head_filters = 64
@@ -139,10 +119,6 @@ def gen_predictor_nets(vae, n_actions, num_heads):
 
 
 def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
-    #obs = (trajectories['s'] / 255).astype(np.float32)
-    #obs = cast_and_normalize_images(trajectories['s'])
-    #next_obs = cast_and_normalize_images(trajectories['s_'])
-    #next_obs = (trajectories['s_'] / 255).astype(np.float32)
     actions = trajectories['a'].astype(np.int32)
     rewards = trajectories['r'].astype(np.float32)
 
@@ -159,11 +135,6 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
 
     encoded_obs = tf.cast(vae.encode_to_indices(obs_datset), tf.float32)
     encoded_next_obs = tf.cast(vae.encode_to_indices(next_obs_datset), tf.float32)
-    print('Dataset conversion done')
-
-    # codebook matrix is shape (n, n), but for predictor we need (n, n, 1)
-    #encoded_obs = np.expand_dims(encoded_obs, axis=-1)
-    #encoded_next_obs = np.expand_dims(encoded_next_obs, axis=-1)
 
     encoded_obs = encoded_obs[:, 0:n_warmup_steps]
     encoded_next_obs = encoded_next_obs[:, :n_steps]
@@ -192,40 +163,6 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
     #    pickle.dump(h, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     return h
-
-    #h = predictor.fit([env_idx, encoded_obs, actions],
-    #                  [encoded_next_obs, rewards],
-    #                  epochs=epochs,
-    #                  batch_size=batch_size,
-    #                  shuffle=True,
-    #                  verbose=1,
-    #                  validation_split=0.10)
-    #
-    #return h.history
-
-
-def predictor_train_loop(complete_predictors_list, vae, memories, simulate_agent_memories, n_actions, n_epochs, n_subtrajectories, n_steps, n_warmup_steps):
-    multihead_predictor = complete_predictors_list[0]
-    all_predictor = complete_predictors_list[1]
-
-    histories = [(n_epochs, n_subtrajectories, n_steps, n_warmup_steps)]
-    #for i, mem in enumerate(simulate_agent_memories):
-    #    print(f'Training multihead predictor\'s head {i + 1} on memory mix {i + 1} with time window {n_steps}, warmup {n_warmup_steps} and {n_epochs} epochs')
-    #    trajs = extract_subtrajectories(mem, n_subtrajectories, n_steps + n_warmup_steps, False)
-    #    env_idx = trajs['env'][:, 0]
-    #    h = train_predictor(vae, multihead_predictor, trajs, env_idx, n_epochs, n_steps, n_warmup_steps)
-    #    histories.append(h)
-    for i, mem in enumerate(simulate_agent_memories):
-        print(f'Training all-predictor on memory mix {i + 1} with time window {n_steps}, warmup {n_warmup_steps} and {n_epochs} epochs')
-        trajs = extract_subtrajectories(mem, n_subtrajectories, n_steps + n_warmup_steps, False)
-        env_idx = np.zeros_like(trajs['env'])
-        h = train_predictor(vae, all_predictor, trajs, env_idx, n_epochs, n_steps, n_warmup_steps)
-        histories.append(h)
-
-    for i, pred in enumerate(complete_predictors_list):
-        pred.save_weights(f'predictors/predictor_{i}')
-    with open('predictors/train_stats', 'wb') as handle:
-        pickle.dump(histories, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_predictor_weights(complete_predictors_list, env_names, plots=False):
@@ -367,107 +304,6 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, video_t
     #anim.save('rollout.mp4', writer=writer)
 
 
-def vae_generalization_test():
-    n_envs = 100
-    envs = [gym.make('Gridworld-room-v0') for _ in range(n_envs)]
-    obs_shape = envs[0].observation_space.shape
-    n_actions = envs[0].action_space.n
-    latent_size = 32
-
-    #memories = gen_data(envs, episodes=10, file_name='generalization_test_vae_train_data.npy')
-    #simulate_agent_memories = gen_mixed_memories(memories, file_name='simulate_agent_memories.npy')
-    memories = load_env_samples(['generalization_test_vae_train_data.npy'])[0]
-
-    vae = vq_vae_net(obs_shape, latent_size)
-
-    #load_vae_weights(vae, memories[-2:], plots=True)
-    train_vae(vae, memories[:-1], steps=100)
-    load_vae_weights(vae, memories, plots=True)
-    #test_vae(vae, memories)
-
-    sfa_transformer = sksfa.SFA(n_components=3)
-    traj = extract_subtrajectories(memories[-1], 1, 200, False)[0]
-    reconstructed = np.clip(vae.predict(traj['s'] / 255), 0, 1)
-    #reconstructed = np.clip(vae.decode(data[..., np.newaxis]), 0, 1)
-    #extracted_features = sfa_transformer.fit_transform(data)
-
-    #plt.plot(extracted_features)
-    #plt.show()
-    anim = trajectory_video([traj['s'] / 255, reconstructed], ['true', 'reconstructed'])
-
-    #train_predictors_2(all_predictors, vae, memories, simulate_agent_memories, n_actions, n_epochs=80, n_subtrajectories=15000, n_steps=5, n_warmup_steps=1)
-
-
-def split_predictor_test():
-    env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
-    #env_names = ['Gridworld-partial-random-v0']
-    envs = [gym.make(env_name) for env_name in env_names]
-
-    obs_shape = envs[0].observation_space.shape
-    n_actions = envs[0].action_space.n
-    latent_size = 20
-    num_latent_k = 10
-
-    vae = vq_vae_net(obs_shape, num_latent_k, latent_size)
-    all_predictors = gen_predictor_nets(vae, n_actions, len(env_names))
-
-    memories = gen_data(envs, samples_per_env=200, file_paths='vae_train_data.npy')
-    simulate_agent_memories = gen_mixed_memory(memories, file_name='simulate_agent_memories.npy')
-    memories, simulate_agent_memories = load_env_samples(['vae_train_data.npy', 'simulate_agent_memories.npy'])
-
-    #train_pos_finder_net(pos_finder, memories, epochs=10)
-    #load_pos_finder_weights(pos_finder, memories, pixel_size=2)
-
-    load_vae_weights(vae, memories, plots=False)
-    train_vae(vae, memories, steps=100)
-    load_vae_weights(vae, memories, plots=False)
-
-    #test_vae_parts(memories, vae)
-
-    #load_predictor_weights(all_predictors, env_names, plots=True)
-    predictor_train_loop(all_predictors, vae, memories, simulate_agent_memories, n_actions, n_epochs=10, n_subtrajectories=10000, n_steps=50, n_warmup_steps=1)
-    load_predictor_weights(all_predictors, env_names, plots=True)
-
-    #test_predictor(all_predictors[0], memories[0], True, vae, n_steps=200, n_warmup_steps=1, video_title='Predictor 0')
-    #test_predictor(all_predictors[0], memories[1], True, vae, n_steps=200, n_warmup_steps=1, video_title='Predictor 1')
-    #test_predictor(all_predictors[0], memories[2], True, vae, n_steps=200, n_warmup_steps=1, video_title='Predictor 2')
-
-    generate_test_rollouts(all_predictors[1], memories[0], False, vae, n_steps=200, n_warmup_steps=1, video_title='All-Predictor Memory 0')
-    generate_test_rollouts(all_predictors[1], memories[1], False, vae, n_steps=200, n_warmup_steps=1, video_title='All-Predictor Memory 0 + 1')
-    generate_test_rollouts(all_predictors[1], memories[2], False, vae, n_steps=200, n_warmup_steps=1, video_title='All-Predictor Memory 0 + 1 + 2')
-
-    n_steps = 500
-    n_trajectories = 200
-    #pred_0_perf = estimate_performance(all_predictors[0], memories[0], True, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-    #pred_1_perf = estimate_performance(all_predictors[0], memories[1], True, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-    #pred_2_perf = estimate_performance(all_predictors[0], memories[2], True, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-
-    all_pred_pref_0 = estimate_performance(all_predictors[1], memories[0], False, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-    all_pred_pref_1 = estimate_performance(all_predictors[1], memories[1], False, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-    all_pred_pref_2 = estimate_performance(all_predictors[1], memories[2], False, vae, n_steps=n_steps, n_warmup_steps=1, n_trajectories=n_trajectories)
-
-    #plt.plot(pred_0_perf, label='multihead_mem_0')
-    #plt.plot(pred_1_perf, label='multihead_mem_1')
-    #plt.plot(pred_2_perf, label='multihead_mem_2')
-    plt.plot(all_pred_pref_0, label='all_predictor_mem_0', linestyle='--')
-    plt.plot(all_pred_pref_1, label='all_predictor_mem_1', linestyle='--')
-    plt.plot(all_pred_pref_2, label='all_predictor_mem_2', linestyle='--')
-    plt.legend()
-    plt.show()
-
-
-def test_vae_parts(memories, vae):
-    obs = memories[2]['s'][0:10000] / 255
-    encodings = vae.encode(obs, 'indices')
-    straight_through = vae.predict(obs)
-    reconstructed = vae.decode(encodings, 'indices')
-    diff_reconstructed = np.abs(obs - reconstructed)
-    diff_straight_thorugh = np.abs(obs - straight_through)
-    print(f'Difference reconstructed: {np.mean(diff_reconstructed)}\nDifference straight through: {np.mean(diff_straight_thorugh)}')
-    #trajectory_video([obs, straight_through, reconstructed], ['obs', 'straight through', 'reconstructed'])
-    #plt.show()
-
-
 def estimate_performance(predictor, mem, use_env_idx, vae, n_steps, n_warmup_steps, n_trajectories):
     predictor.predict_steps = n_steps
 
@@ -497,72 +333,5 @@ def estimate_performance(predictor, mem, use_env_idx, vae, n_steps, n_warmup_ste
     return diff_img.mean(axis=(0, 2, 3, 4))
 
 
-def distibution_test():
-    import tensorflow_probability as tfp
-    from tensorflow_probability import distributions as tfd
-
-    n_batch = 32
-    n_cat = 10
-    logits = np.zeros((n_batch, 5, 5, n_cat))
-    logits[:, :, 0] = 1
-    #logits = [-1.1, 0.8, 0.1]
-    dist = tfd.RelaxedOneHotCategorical(logits=logits, temperature=0.001)
-    print(dist)
-
-    layer = tfp.layers.DistributionLambda(
-        make_distribution_fn=lambda t: tfd.Independent(tfd.RelaxedOneHotCategorical(0.001, logits=logits),
-                                                       reinterpreted_batch_ndims=2),
-        convert_to_tensor_fn=lambda t: t.sample(),
-    )
-    distribution = layer(None)
-    print(distribution)
-    #print(distribution.sample())
-    #print(distribution.sample())
-    #print(distribution.sample())
-
-    return
-
-    n_x = 200
-    n_c = 20
-    output_shape = (5, 5)
-
-    x = np.random.randint(0, n_c, 200).astype(np.float32)
-    y = [np.full((5, 5), val).astype(np.float32) for val in x]
-    y[:, 0, 0] = 1
-
-    negloglik = lambda y, rv_y: -rv_y.log_prob(y)
-    inp = tf.keras.layers.Input((1,))
-    layer = tf.keras.layers.Dense(5 * 5 * tfp.layers.OneHotCategorical.params_size(n_c))(inp)
-    layer = tf.keras.layers.Reshape((5, 5, tfp.layers.OneHotCategorical.params_size(n_c)))(layer)
-    #layer = tfp.layers.DistributionLambda(
-    #    make_distribution_fn=lambda t: tfd.RelaxedOneHotCategorical(0.0005, logits=t),
-    #    convert_to_tensor_fn=lambda t: t.sample(),
-    #)(layer)
-    layer = tfp.layers.DistributionLambda(
-        make_distribution_fn=lambda t: tfd.RelaxedOneHotCategorical(0.001, logits=t),
-        convert_to_tensor_fn=lambda t: t.sample(),
-    )(layer)
-    layer = OneHotToIndex()(layer)
-    #layer = tf.keras.layers.Lambda(lambda t: tf.matmul(tf.repeat(tf.range(t.get_shape()[-1], dtype=tf.float32)), t))(layer)
-    mdl = keras.Model(inputs=inp, outputs=layer)
-    #mdl.summary()
-
-    # Do inference.
-    mdl.compile(optimizer=tf.optimizers.Adam(learning_rate=0.01), loss='mse')
-    mdl.fit(x, y, epochs=100, verbose=False)
-
-    y_hat = mdl.predict([0, 1])
-    print(y_hat)
-
-
 if __name__ == '__main__':
-    #distibution_test()
-    #vae_generalization_test()
-    #split_predictor_test()
     single_predictor()
-
-    #inp = np.array([[0, 1, 0], [1, 1, 0]])
-    #print(inp.shape)
-    #l = InflateActionLayer((5, 5), 3)
-    #outp = l(inp)
-    #print(outp)

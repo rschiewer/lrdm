@@ -1,7 +1,12 @@
 import matplotlib.pyplot as plt
+import numpy
+import sksfa
 from matplotlib import animation, rc
 import time
+
+from main_conv_predictor import vq_vae_net, train_vae, load_vae_weights
 from predictors import *
+from replay_memory_tools import load_env_samples, extract_subtrajectories, trajectory_video
 from vae import *
 from blockworld import *
 from tensorflow.keras import layers
@@ -183,3 +188,34 @@ def plot_latent_space(vae, memory):
 
     plt.scatter(embedded[:, 0], embedded[:, 1], c=labels)
     plt.show()
+
+
+def vae_generalization_test():
+    n_envs = 100
+    envs = [gym.make('Gridworld-room-v0') for _ in range(n_envs)]
+    obs_shape = envs[0].observation_space.shape
+    n_actions = envs[0].action_space.n
+    latent_size = 32
+
+    #memories = gen_data(envs, episodes=10, file_name='generalization_test_vae_train_data.npy')
+    #simulate_agent_memories = gen_mixed_memories(memories, file_name='simulate_agent_memories.npy')
+    memories = load_env_samples(['generalization_test_vae_train_data.npy'])[0]
+
+    vae = vq_vae_net(obs_shape, latent_size)
+
+    #load_vae_weights(vae, memories[-2:], plots=True)
+    train_vae(vae, memories[:-1], steps=100)
+    load_vae_weights(vae, memories, plots=True)
+    #test_vae(vae, memories)
+
+    sfa_transformer = sksfa.SFA(n_components=3)
+    traj = extract_subtrajectories(memories[-1], 1, 200, False)[0]
+    reconstructed = np.clip(vae.predict(traj['s'] / 255), 0, 1)
+    #reconstructed = np.clip(vae.decode(data[..., np.newaxis]), 0, 1)
+    #extracted_features = sfa_transformer.fit_transform(data)
+
+    #plt.plot(extracted_features)
+    #plt.show()
+    anim = trajectory_video([traj['s'] / 255, reconstructed], ['true', 'reconstructed'])
+
+    #train_predictors_2(all_predictors, vae, memories, simulate_agent_memories, n_actions, n_epochs=80, n_subtrajectories=15000, n_steps=5, n_warmup_steps=1)

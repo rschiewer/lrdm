@@ -1,5 +1,4 @@
 from tensorflow_probability import distributions as tfd
-
 from tf_tools import *
 from keras_vq_vae import VectorQuantizerEMAKeras
 
@@ -29,6 +28,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self._decider_lw = decider_lw
         self.open_loop_rollout_training = open_loop_rollout_training
         self.n_models = n_models
+        self._vqvae = vqvae
 
         self.mdl_stack = []
         for i_mdl in range(n_models):
@@ -58,7 +58,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         x_params_pred = vqvae_i_to_vec(in_o)
         x_params_pred = layers.Lambda(lambda inp: obs_flatten(inp))(x_params_pred)
         x_params_pred = layers.Dense(64, activation='relu')(x_params_pred)
+        x_params_pred = layers.LayerNormalization()(x_params_pred)
         x_params_pred = layers.Dense(64, activation='relu')(x_params_pred)
+        x_params_pred = layers.LayerNormalization()(x_params_pred)
         x_params_pred, *lstm_states = layers.LSTM(decider_lw, return_state=True, return_sequences=True)(x_params_pred, initial_state=[lstm_c, lstm_h])
         x_params_pred = layers.Dense(n_mdl, activation=None, name='p_pred_out')(x_params_pred)
 
@@ -69,9 +71,11 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         in_h = layers.Input(h_out_shape, name='p_r_in')
         x_params_r = layers.Flatten()(in_h)
         x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
-        #x_params_r = layers.LayerNormalization()(x_params_r)
+        x_params_r = layers.LayerNormalization()(x_params_r)
+        #x_params_r = layers.BatchNormalization()(x_params_r)
         x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
-        #x_params_r = layers.LayerNormalization()(x_params_r)
+        x_params_r = layers.LayerNormalization()(x_params_r)
+        #x_params_r = layers.BatchNormalization()(x_params_r)
         x_params_r = layers.Dense(2, activation=None, name='p_r_out')(x_params_r)
 
         return keras.Model(inputs=in_h, outputs=x_params_r, name='p_r_model')
@@ -80,9 +84,11 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         # stochastic model to implement p(o_t+1 | o_t, a_t, h_t)
         in_h = layers.Input(h_out_shape, name='p_o_in')
         x_params_o = layers.Conv2D(prob_filters, kernel_size=5, padding='SAME', activation='relu')(in_h)
-        #x_params_o = layers.LayerNormalization()(x_params_o)
+        x_params_o = layers.LayerNormalization()(x_params_o)
+        #x_params_o = layers.BatchNormalization()(x_params_o)
         x_params_o = layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation='relu')(x_params_o)
-        #x_params_o = layers.LayerNormalization()(x_params_o)
+        x_params_o = layers.LayerNormalization()(x_params_o)
+        #x_params_o = layers.BatchNormalization()(x_params_o)
         x_params_o = layers.Conv2D(vqvae.num_embeddings, kernel_size=3, padding='SAME', activation=None, name='p_o_out')(x_params_o)
 
         return keras.Model(inputs=in_h, outputs=x_params_o, name='p_o_model')
@@ -100,9 +106,11 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         a_inflated = InflateActionLayer(s_obs, n_actions, True)(in_a)
         h = layers.Concatenate(axis=-1)([o_cb_vectors, a_inflated])
         h = layers.Conv2D(det_filters, kernel_size=5, padding='SAME', activation='relu')(h)
-        #h = layers.LayerNormalization()(h)
+        h = layers.LayerNormalization()(h)
+        #h = layers.BatchNormalization()(h)
         h = layers.Conv2D(det_filters, kernel_size=3, padding='SAME', activation='relu')(h)
-        #h = layers.LayerNormalization()(h)
+        h = layers.LayerNormalization()(h)
+        #h = layers.BatchNormalization()(h)
         h, *h_states = layers.ConvLSTM2D(det_filters, kernel_size=3, return_state=True,
                                                  return_sequences=True, padding='SAME',
                                                  name='h_out')(h, initial_state=[lstm_c, lstm_h])
@@ -113,7 +121,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
     def _gen_index_transform_layer(self, vqvae):
         def transform_fun(input):
             indices = tf.argmax(input, -1)
-            index_matrices = tf.stop_gradient(vqvae.indices_to_embeddings(indices))
+            index_matrices = vqvae.indices_to_embeddings(indices)
             return index_matrices
 
         return tf.keras.layers.Lambda(lambda inp: transform_fun(inp))
@@ -126,7 +134,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
     def _temp(self, training):
         if training:
-            return 2
+            return 1
         else:
             return 0.01
 
@@ -187,7 +195,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         return o_predictions.stack(), r_predictions.stack(), w_predictors
 
     @tf.function
-    def _rollout_open_loop(self, inputs, training=None):
+    def rollout_open_loop(self, inputs, training=None):
         o_in, a_in = inputs
 
         n_batch = tf.shape(o_in)[0]
@@ -285,7 +293,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         inputs = (one_hot_obs, a_in)
 
         if self.open_loop_rollout_training:
-            trajectories = self._rollout_open_loop(inputs, training)
+            trajectories = self.rollout_open_loop(inputs, training)
         else:
             trajectories = self._rollout_closed_loop(inputs, training)
 
@@ -316,6 +324,10 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         x, y = data
 
+        # lock parameters of vqvae to make sure they are not updated
+        vqvae_is_trainable = self._vqvae.trainable
+        self._vqvae.trainable = False
+
         with tf.GradientTape() as tape:
             o_groundtruth = tf.one_hot(tf.cast(y[0], tf.int32), self._vae_n_embeddings, dtype=tf.float32)
             r_groundtruth = y[1]
@@ -342,11 +354,11 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         # Compute gradients
         gradients = tape.gradient(total_loss, self.trainable_weights)
-
         # clip gradients
         #gradients = [tf.clip_by_value(grad, -1, 1) for grad in gradients]
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+        self._vqvae.trainable = vqvae_is_trainable
 
         o_most_probable, r_most_probable = self.most_probable_trajectories(o_predictions, r_predictions, w_predictors)
 

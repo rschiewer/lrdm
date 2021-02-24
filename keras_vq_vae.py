@@ -371,7 +371,7 @@ class Decoder(tfkl.Layer):
         x_recon = self._dec_3(h)
 
         s_rec = x_recon.get_shape().as_list()
-        if len(s_in) > 4:
+        if len(s_in) == 5:
             x_recon = tf.reshape(x_recon, (-1, s_in[1], s_rec[-3], s_rec[-2], s_rec[-1]))
         return x_recon
 
@@ -392,7 +392,8 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
                  num_embeddings=512,
                  num_hiddens=128,
                  num_residual_hiddens=32,
-                 num_residual_layers=2):
+                 num_residual_layers=2,
+                 grayscale_input=False):
 
         super(VectorQuantizerEMAKeras, self).__init__()
 
@@ -406,17 +407,18 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.frame_stack = 1
+        self._grayscale_input = grayscale_input
 
-    def _decode(self, vq_output, n_channels):
+    def _decode(self, vq_output):
         x_recon = self._decoder(vq_output)
-        if n_channels == 1:  # in case of grayscale images, only take first channel from 3-channel decoder
+        if self._grayscale_input:  # in case of grayscale images, only take first channel from 3-channel decoder
             x_recon = x_recon[..., 0, tf.newaxis]
         return x_recon
 
     def call(self, inputs, training=None, **kwargs):
         z = self._pre_vq_conv1(self._encoder(inputs))
         vq_output = self._vqvae(z, training=training)
-        x_recon = self._decode(vq_output, tf.shape(inputs)[-1])
+        x_recon = self._decode(vq_output)
         recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
 
         # use the internal losses implemented by the vq_vae model of sonnet
@@ -467,13 +469,13 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
             vq_output = tf.one_hot(embed_indices, self.num_embeddings, axis=-1)
         return vq_output
 
-    def decode_from_vectors(self, embeddings, n_channels):
-        x_recon = self._decode(embeddings, n_channels)
+    def decode_from_vectors(self, embeddings):
+        x_recon = self._decode(embeddings)
         return x_recon
 
-    def decode_from_indices(self, indices, n_channels):
+    def decode_from_indices(self, indices):
         embeddings = self._vqvae.codebook_lookup(indices)
-        x_recon = self._decode(embeddings, n_channels)
+        x_recon = self._decode(embeddings)
         return x_recon
 
     def indices_to_embeddings(self, indices):

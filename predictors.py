@@ -30,6 +30,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self.n_models = n_models
         self._vqvae = vqvae
 
+
         self.mdl_stack = []
         for i_mdl in range(n_models):
             det_model = self._det_state(det_filters, n_actions, observation_shape, vqvae)
@@ -72,10 +73,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         x_params_r = layers.Flatten()(in_h)
         x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
         x_params_r = layers.LayerNormalization()(x_params_r)
-        #x_params_r = layers.BatchNormalization()(x_params_r)
         x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
         x_params_r = layers.LayerNormalization()(x_params_r)
-        #x_params_r = layers.BatchNormalization()(x_params_r)
         x_params_r = layers.Dense(2, activation=None, name='p_r_out')(x_params_r)
 
         return keras.Model(inputs=in_h, outputs=x_params_r, name='p_r_model')
@@ -84,11 +83,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         # stochastic model to implement p(o_t+1 | o_t, a_t, h_t)
         in_h = layers.Input(h_out_shape, name='p_o_in')
         x_params_o = layers.Conv2D(prob_filters, kernel_size=5, padding='SAME', activation='relu')(in_h)
-        x_params_o = layers.LayerNormalization()(x_params_o)
-        #x_params_o = layers.BatchNormalization()(x_params_o)
+        x_params_o = layers.LayerNormalization(axis=(-1, -2, -3))(x_params_o)
         x_params_o = layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation='relu')(x_params_o)
-        x_params_o = layers.LayerNormalization()(x_params_o)
-        #x_params_o = layers.BatchNormalization()(x_params_o)
+        x_params_o = layers.LayerNormalization(axis=(-1, -2, -3))(x_params_o)
         x_params_o = layers.Conv2D(vqvae.num_embeddings, kernel_size=3, padding='SAME', activation=None, name='p_o_out')(x_params_o)
 
         return keras.Model(inputs=in_h, outputs=x_params_o, name='p_o_model')
@@ -106,11 +103,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         a_inflated = InflateActionLayer(s_obs, n_actions, True)(in_a)
         h = layers.Concatenate(axis=-1)([o_cb_vectors, a_inflated])
         h = layers.Conv2D(det_filters, kernel_size=5, padding='SAME', activation='relu')(h)
-        h = layers.LayerNormalization()(h)
-        #h = layers.BatchNormalization()(h)
+        h = layers.LayerNormalization(axis=(-1, -2, -3))(h)
         h = layers.Conv2D(det_filters, kernel_size=3, padding='SAME', activation='relu')(h)
-        h = layers.LayerNormalization()(h)
-        #h = layers.BatchNormalization()(h)
+        h = layers.LayerNormalization(axis=(-1, -2, -3))(h)
         h, *h_states = layers.ConvLSTM2D(det_filters, kernel_size=3, return_state=True,
                                                  return_sequences=True, padding='SAME',
                                                  name='h_out')(h, initial_state=[lstm_c, lstm_h])
@@ -134,7 +129,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
     def _temp(self, training):
         if training:
-            return 1
+            return 3
         else:
             return 0.01
 
@@ -280,6 +275,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         params_r = tf.reshape(params_r, (n_batch, 1, 2))
 
         o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
+        #indices = tf.argmax(o_pred, axis=-1)
+        #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
         r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
 
         return o_pred, r_pred, states_h
@@ -318,6 +315,13 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         r_predictions = tf.gather_nd(r_predictions, i_predictor, batch_dims=2)
         return o_predictions, r_predictions
 
+    def n_trainable_weights(self):
+        vqvae_is_trainable = self._vqvae.trainable
+        self._vqvae.trainable = False
+        n_weights = len(self.trainable_weights)
+        self._vqvae.trainable = vqvae_is_trainable
+        return n_weights
+
     @tf.function
     def train_step(self, data):
         tf.assert_equal(len(data), 2), f'Need tuple (x, y) for training, got {len(data)}'
@@ -350,7 +354,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                 curr_mdl_obs_err = tf.reduce_sum(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
                 curr_mdl_r_err = tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
                 total_loss += tf.reduce_mean(curr_mdl_obs_err) + tf.reduce_mean(curr_mdl_r_err)
-                #total_loss += 0.1 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.01 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.01 * tf.reduce_sum(w_predictor[1:] - w_predictor[:-1])  # regularization to incentivize picker to not switch predictors too often
 
         # Compute gradients
         gradients = tape.gradient(total_loss, self.trainable_weights)
@@ -374,8 +379,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                 'most_probable_r_error': self._rew_accuracy.result(),
                 't': self._temp(True),
                 'w0': tf.reduce_mean(w_predictors, axis=[1, 2])[0],
-                #'w1': tf.reduce_mean(w_predictors, axis=[1, 2])[1],
-                #'w2': tf.reduce_mean(w_predictors, axis=[1, 2])[2]
+                'w1': tf.reduce_mean(w_predictors, axis=[1, 2])[1],
+                'w2': tf.reduce_mean(w_predictors, axis=[1, 2])[2]
                 }#.update(weight_stats)
 
     @tf.function

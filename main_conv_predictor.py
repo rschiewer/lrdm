@@ -30,15 +30,15 @@ def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, grayscale_
     return vae
 
 
-def predictor_net(n_actions, obs_shape, vae):
+def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
     all_predictor = AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(vae_index_matrix_shape, n_actions,
                                                                                     vae,
                                                                                     open_loop_rollout_training=True,
-                                                                                    det_filters=16,
-                                                                                    prob_filters=16,
-                                                                                    decider_lw=16,
-                                                                                    n_models=3)  # , debug_log=True)
+                                                                                    det_filters=det_filters,
+                                                                                    prob_filters=prob_filters,
+                                                                                    decider_lw=decider_lw,
+                                                                                    n_models=n_models)  # , debug_log=True)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
     net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
     net_s_act = tf.TensorShape((None, None, 1))
@@ -220,6 +220,10 @@ def single_predictor():
     n_subtrajectories = 5000
     n_traj_steps = 10
     n_warmup_steps = 5
+    det_filters = 16
+    prob_filters = 16
+    decider_lw = 16
+    n_models = 3
 
     #tf.config.run_functions_eagerly(True)
 
@@ -245,8 +249,9 @@ def single_predictor():
 
     vae = vq_vae_net(obs_shape, n_embeddings, d_embedding, train_data_var, grayscale_input, frame_stack)
     #vae.summary()
-    all_predictor = predictor_net(n_actions, obs_shape, vae)
-    #all_predictor.summary()
+    all_predictor = predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models)
+    all_predictor.summary()
+    quit()
 
     # train vae
     #load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
@@ -256,12 +261,12 @@ def single_predictor():
     # extract trajectories and train predictor
     trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, False)
     #all_predictor.load_weights('predictors/' + predictor_weights_path)
-    train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=32)
+    #train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=32)
     all_predictor.load_weights('predictors/' + predictor_weights_path).expect_partial()
     all_predictor.summary()
 
-    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 200)
-    #rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
+    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
+    rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
 
     plt.hist(np.array(w_predictors).flatten())
     plt.show()

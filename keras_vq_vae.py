@@ -430,12 +430,8 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
         return x_recon
 
-    def compute_latent_shape(self, input):
-        if tf.rank(input) == 3:
-            single_input = tf.expand_dims(tf.convert_to_tensor(input, dtype=tf.float32), 0)
-        elif tf.rank(input) == 4:
-            signle_input = tf.expand_dims(tf.convert_to_tensor(input[0], dtype=tf.float32), 0)
-        index_mat = self.encode_to_indices(signle_input)
+    def compute_latent_shape(self, input_shape):
+        index_mat = self.encode_to_indices(tf.zeros((1, *input_shape), dtype=tf.float32))
         return index_mat.get_shape()[1:]
 
     def encode_to_vectors(self, inputs):

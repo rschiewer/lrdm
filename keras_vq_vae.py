@@ -408,6 +408,8 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         self.embedding_dim = embedding_dim
         self.frame_stack = 1
         self._grayscale_input = grayscale_input
+        self._total_loss = tf.keras.metrics.Mean('total_loss')
+        self._reconstruction_loss = tf.keras.metrics.Mean('reconstruction_loss')
 
     def _decode(self, vq_output):
         x_recon = self._decoder(vq_output)
@@ -419,11 +421,12 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         z = self._pre_vq_conv1(self._encoder(inputs))
         vq_output = self._vqvae(z, training=training)
         x_recon = self._decode(vq_output)
-        recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
+        #recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
+        #self.add_metric(recon_error, 'reconstruction_loss')
 
         # use the internal losses implemented by the vq_vae model of sonnet
-        self.add_loss(recon_error)  # reconstruction loss
-        self.add_metric(recon_error, 'reconstruction_loss')
+        #self.add_loss(recon_error)  # reconstruction loss
+        #self.add_metric(recon_error, 'reconstruction_loss')
         #self.add_loss(vq_loss)
         #self.add_loss(vq_output['loss'])  # latent loss
         #self.add_metric(recon_error + vq_output['loss'], name='loss')
@@ -483,11 +486,16 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         x = data
         with tf.GradientTape() as tape:
             x_recon = self(x, training=True)
-            loss = self.compiled_loss(x, x_recon, regularization_losses=self.losses)
+            recon_error = tf.reduce_mean((x_recon - x) ** 2) / self._data_variance
+            #loss = self.compiled_loss(x, x_recon, regularization_losses=self.losses)
+            #loss += recon_error
+            loss = recon_error + self.losses
 
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        self._total_loss.update_state(loss)
+        self._reconstruction_loss.update_state(recon_error)
         self.compiled_metrics.update_state(x, x_recon)
 
         return {m.name: m.result() for m in self.metrics}

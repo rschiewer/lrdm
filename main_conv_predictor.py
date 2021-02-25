@@ -21,12 +21,29 @@ if gpus:
         print(e)
 
 
-def vq_vae_net(n_embeddings, d_embeddings, train_data_var, grayscale_input=False, frame_stack=1):
+def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, grayscale_input=False, frame_stack=1):
     assert frame_stack == 1, 'No frame stacking supported currently'
     vae = VectorQuantizerEMAKeras(train_data_var, num_embeddings=n_embeddings, embedding_dim=d_embeddings,
                                   grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
+    vae.build((None, *obs_shape))
     return vae
+
+
+def predictor_net(n_actions, obs_shape, vae):
+    vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
+    all_predictor = AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(vae_index_matrix_shape, n_actions,
+                                                                                    vae,
+                                                                                    open_loop_rollout_training=True,
+                                                                                    det_filters=16,
+                                                                                    prob_filters=16,
+                                                                                    decider_lw=16,
+                                                                                    n_models=3)  # , debug_log=True)
+    all_predictor.compile(optimizer=tf.optimizers.Adam())
+    net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
+    net_s_act = tf.TensorShape((None, None, 1))
+    all_predictor.build([net_s_obs, net_s_act])
+    return all_predictor
 
 
 def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200):
@@ -97,29 +114,6 @@ def load_vae_weights(vae, test_memory, file_name, plots=False):
         #anim = trajectory_video([trajs['s'] / 255, reconstructed], ['true', 'reconstructed'])
         anim = trajectory_video(all_videos, all_titles, max_cols=2)
         plt.show()
-
-
-def gen_predictor_nets(vae, n_actions, num_heads):
-    state_shape = vae.latent_shape
-    per_head_filters = 64
-
-    multihead_predictor = AutoregressiveMultiHeadFullyConvolutionalPredictor(state_shape, n_actions,
-                                                                             per_head_filters=per_head_filters,
-                                                                             n_heads=3)
-    cb_map_shape = vae.enc_out_shape
-    all_predictor = AutoregressiveProbabilisticFullyConvolutionalPredictor(cb_map_shape, n_actions, vae.codes_sampler,
-                                                                           vae.n_cb_vectors, vae.latent_shape,
-                                                                           vae.enc_out_shape,
-                                                                           per_head_filters=per_head_filters * 3,
-                                                                           n_models=1)
-    complete_predictors_list = [multihead_predictor, all_predictor]
-    for pred in complete_predictors_list:
-        pred.compile(loss=['categorical_crossentropy', 'mse'],
-                     optimizer=tf.optimizers.Adam(),
-                     metrics={'output_1': tf.keras.metrics.CategoricalCrossentropy(),
-                              'output_2': tf.keras.metrics.MeanSquaredError()})#, run_eagerly=True)
-
-    return complete_predictors_list
 
 
 def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
@@ -225,7 +219,7 @@ def single_predictor():
     n_pred_train_steps = 10000
     n_subtrajectories = 5000
     n_traj_steps = 10
-    n_warmup_steps = 3
+    n_warmup_steps = 5
 
     #tf.config.run_functions_eagerly(True)
 
@@ -249,31 +243,28 @@ def single_predictor():
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
 
-    vae = vq_vae_net(n_embeddings, d_embedding, train_data_var, grayscale_input, frame_stack)
-    vae_index_matrix_shape = vae.compute_latent_shape(mix_memory['s'])
-    all_predictor = AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(vae_index_matrix_shape, n_actions,
-                                                                                    vae,
-                                                                                    open_loop_rollout_training=True,
-                                                                                    det_filters=64,
-                                                                                    prob_filters=64,
-                                                                                    decider_lw=64,
-                                                                                    n_models=1)#, debug_log=True)
-    all_predictor.compile(optimizer=tf.optimizers.Adam())
+    vae = vq_vae_net(obs_shape, n_embeddings, d_embedding, train_data_var, grayscale_input, frame_stack)
+    #vae.summary()
+    all_predictor = predictor_net(n_actions, obs_shape, vae)
+    #all_predictor.summary()
 
     # train vae
     #load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
     #train_vae(vae, mix_memory, n_vae_steps, file_name=vae_weights_path, batch_size=512)
-    load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
+    load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=True)
 
     # extract trajectories and train predictor
     trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, False)
-
     #all_predictor.load_weights('predictors/' + predictor_weights_path)
     train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=32)
     all_predictor.load_weights('predictors/' + predictor_weights_path).expect_partial()
+    all_predictor.summary()
 
-    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
-    rollout_videos(targets,rollouts, w_predictors, 'Predictor Test')
+    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 200)
+    #rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
+
+    plt.hist(np.array(w_predictors).flatten())
+    plt.show()
 
     pixel_diff_mean = np.mean(targets - rollouts, axis=(0, 2, 3, 4))
     pixel_diff_var = np.std(targets - rollouts, axis=(0, 2, 3, 4))
@@ -308,7 +299,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
 
 
 def rollout_videos(targets, decoded_rollout_obs, chosen_predictor, video_title, store_animation=False):
-    max_pred_idx = chosen_predictor.max()
+    max_pred_idx = chosen_predictor.max() + 1e-5
     all_videos = []
     all_titles = []
     for i, (ground_truth, rollout, pred_weight) in enumerate(zip(targets, decoded_rollout_obs, chosen_predictor)):

@@ -1,11 +1,8 @@
 import matplotlib.pyplot as plt
-import numpy
 import sksfa
-from matplotlib import animation, rc
-import time
 
 from main_conv_predictor import vq_vae_net, train_vae, load_vae_weights
-from predictors import *
+from old_predictors import AutoregressiveProbabilisticPredictor
 from replay_memory_tools import load_env_samples, extract_subtrajectories, trajectory_video
 from vae import *
 from blockworld import *
@@ -13,8 +10,6 @@ from tensorflow.keras import layers
 from sklearn.cluster import KMeans
 from sklearn.metrics import davies_bouldin_score
 import gym
-import warnings
-import os
 from see_rnn import *
 
 #os.environ['TF_CPP_MIN_LOG_LEVEL']='0'

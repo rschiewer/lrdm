@@ -3,7 +3,7 @@ from functools import partial
 from typing import Iterable
 
 import numpy
-import tensorflow
+import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow import keras
 from tensorflow.keras import layers

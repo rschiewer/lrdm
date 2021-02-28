@@ -54,82 +54,87 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         in_o = layers.Input((None, *s_obs, vqvae.num_embeddings), name='p_pred_o_in')
         lstm_c = layers.Input((decider_lw,), name='p_pred_lstm_c')
         lstm_h = layers.Input((decider_lw,), name='p_pred_lstm_h')
-        vqvae_i_to_vec = self._gen_index_transform_layer(vqvae)
+        index_transform_fn = self._index_transform_fn(vqvae)
 
-        x_params_pred = vqvae_i_to_vec(in_o)
+        x_params_pred = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
         x_params_pred = layers.Lambda(lambda inp: obs_flatten(inp))(x_params_pred)
-        x_params_pred = layers.Dense(64, activation='relu')(x_params_pred)
-        x_params_pred = layers.LayerNormalization()(x_params_pred)
-        x_params_pred = layers.Dense(64, activation='relu')(x_params_pred)
-        x_params_pred = layers.LayerNormalization()(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Dense(64, activation='relu'))(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Dense(64, activation='relu'))(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
         x_params_pred, *lstm_states = layers.LSTM(decider_lw, return_state=True, return_sequences=True)(x_params_pred, initial_state=[lstm_c, lstm_h])
-        x_params_pred = layers.Dense(n_mdl, activation=None, name='p_pred_out')(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Dense(n_mdl, activation=None, name='p_pred_out'))(x_params_pred)
 
         return keras.Model(inputs=[in_o, lstm_c, lstm_h], outputs=[x_params_pred, lstm_states], name='p_pred_model')
 
     def _gen_params_r(self, h_out_shape, prob_filters):
         # stochastic model to implement p(r_t+1 | o_t, a_t, h_t)
-        in_h = layers.Input(h_out_shape, name='p_r_in')
-        x_params_r = layers.Flatten()(in_h)
-        x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
-        x_params_r = layers.LayerNormalization()(x_params_r)
-        x_params_r = layers.Dense(prob_filters, activation='relu')(x_params_r)
-        x_params_r = layers.LayerNormalization()(x_params_r)
-        x_params_r = layers.Dense(2, activation=None, name='p_r_out')(x_params_r)
+        in_h = layers.Input((None, *h_out_shape), name='p_r_in')
+        x_params_r = layers.TimeDistributed(layers.Flatten())(in_h)
+        x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Dense(2, activation=None, name='p_r_out'))(x_params_r)
 
         return keras.Model(inputs=in_h, outputs=x_params_r, name='p_r_model')
 
     def _gen_params_o(self, h_out_shape, prob_filters, vqvae):
         # stochastic model to implement p(o_t+1 | o_t, a_t, h_t)
-        in_h = layers.Input(h_out_shape, name='p_o_in')
-        x_params_o = layers.Conv2D(prob_filters, kernel_size=5, padding='SAME', activation='relu')(in_h)
-        x_params_o = layers.LayerNormalization(axis=(-1, -2, -3))(x_params_o)
-        x_params_o = layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation='relu')(x_params_o)
-        x_params_o = layers.LayerNormalization(axis=(-1, -2, -3))(x_params_o)
-        x_params_o = layers.Conv2D(vqvae.num_embeddings, kernel_size=3, padding='SAME', activation=None, name='p_o_out')(x_params_o)
+        in_h = layers.Input((None, *h_out_shape), name='p_o_in')
+        x_params_o = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=5, padding='SAME', activation='relu'))(in_h)
+        x_params_o = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(x_params_o)
+        x_params_o = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation='relu'))(x_params_o)
+        x_params_o = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(x_params_o)
+        x_params_o = layers.TimeDistributed(layers.Conv2D(vqvae.num_embeddings, kernel_size=3, padding='SAME', activation=None, name='p_o_out'))(x_params_o)
 
         return keras.Model(inputs=in_h, outputs=x_params_o, name='p_o_model')
 
     def _det_state(self, det_filters, prob_filters, n_actions, s_obs, vqvae):
         # deterministic model to form state belief h_t = f(o_t-1, a_t-1, c_t-1)
         # note: h_t-1 is injected into the model not as explicit input but through previous LSTM states
-        vqvae_i_to_vec = self._gen_index_transform_layer(vqvae)
+        index_transform_fn = self._index_transform_fn(vqvae)
         in_o = layers.Input((None, *s_obs, vqvae.num_embeddings), name='h_o_in')
         in_a = layers.Input((None, 1), name='h_a_in')
         lstm_c = layers.Input((*s_obs, det_filters), name='h_lstm_in0')
         lstm_h = layers.Input((*s_obs, det_filters), name='h_lstm_in1')
 
-        o_cb_vectors = vqvae_i_to_vec(in_o)
+        o_cb_vectors = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
         a_inflated = InflateActionLayer(s_obs, n_actions, True)(in_a)
         h = layers.Concatenate(axis=-1)([o_cb_vectors, a_inflated])
-        h = layers.Conv2D(det_filters, kernel_size=5, padding='SAME', activation='relu')(h)
-        h = layers.LayerNormalization(axis=(-1, -2, -3))(h)
-        h = layers.Conv2D(det_filters, kernel_size=3, padding='SAME', activation='relu')(h)
-        h = layers.LayerNormalization(axis=(-1, -2, -3))(h)
+        h = layers.TimeDistributed(layers.Conv2D(det_filters, kernel_size=5, padding='SAME', activation='relu'))(h)
+        h = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(h)
+        h = layers.TimeDistributed(layers.Conv2D(det_filters, kernel_size=3, padding='SAME', activation='relu'))(h)
+        h = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(h)
         h, *h_states = layers.ConvLSTM2D(det_filters, kernel_size=3, return_state=True,
                                                  return_sequences=True, padding='SAME',
                                                  name='h_out')(h, initial_state=[lstm_c, lstm_h])
-        h = layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation=None)(h)
+        h = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation=None))(h)
 
         return keras.Model(inputs=[in_o, in_a, lstm_c, lstm_h], outputs=[h, h_states], name='h_model')
 
-    def _gen_index_transform_layer(self, vqvae):
-        def transform_fun(input):
-            indices = tf.argmax(input, -1)
-            index_matrices = vqvae.indices_to_embeddings(indices)
-            return index_matrices
+    def _index_transform_fn(self, vqvae, straight_through_gradient=False):
+        if straight_through_gradient:
+            def transform_fun(lazy_one_hot_indices):
+               index_matrices = vqvae.indices_to_embeddings_straight_through(lazy_one_hot_indices)
+               return index_matrices
+        else:
+            def transform_fun(input):
+                indices = tf.argmax(input, -1)
+                index_matrices = vqvae.indices_to_embeddings(indices)
+                return index_matrices
 
-        return tf.keras.layers.Lambda(lambda inp: transform_fun(inp))
+        return transform_fun
 
     def _temp_predictor_picker(self, training):
         if training:
-            return 2
+            return 1
         else:
             return 0.01
 
     def _temp(self, training):
         if training:
-            return 3
+            return 1
         else:
             return 0.01
 
@@ -148,7 +153,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
     def _w_pred_dummy(self, n_batch):
         return tf.fill([n_batch, 1, len(self.mdl_stack)], 1.0 / len(self.mdl_stack))
 
-    #@tf.function
+    @tf.function
     def _rollout_closed_loop(self, inputs, training=None):
         o_in, a_in = inputs
         n_batch = tf.shape(a_in)[0]
@@ -165,12 +170,15 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         for i, (det_model, params_o_model, params_r_model) in enumerate(self.mdl_stack):
             dummy_states_h = self._conv_lstm_start_states(n_batch, self._det_lstm_shape)
             h, _hs, = det_model([o_in, a_in] + dummy_states_h, training=training)
-            h_flattened = tf.reshape(h, (-1, *self._h_out_shape))
+            #h_flattened = tf.reshape(h, (-1, *self._h_out_shape))
 
-            params_o = params_o_model(h_flattened, training=training)
-            params_o = tf.reshape(params_o, (n_batch, n_time, *self.s_obs, self._vae_n_embeddings))
-            params_r = params_r_model(h_flattened, training=training)
-            params_r = tf.reshape(params_r, (n_batch, n_time, 2))
+            #params_o = params_o_model(h_flattened, training=training)
+            #params_o = tf.reshape(params_o, (n_batch, n_time, *self.s_obs, self._vae_n_embeddings))
+            #params_r = params_r_model(h_flattened, training=training)
+            #params_r = tf.reshape(params_r, (n_batch, n_time, 2))
+            params_o = params_o_model(h, training=training)
+            params_r = params_r_model(h, training=training)
+
 
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
@@ -189,7 +197,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         return o_predictions.stack(), r_predictions.stack(), w_predictors
 
-    #@tf.function
+    @tf.function
     def rollout_open_loop(self, inputs, training=None):
         o_in, a_in = inputs
 
@@ -263,16 +271,18 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         return o_predictions, r_predictions, w_predictors
 
-    #@tf.function
+    @tf.function
     def _open_loop_step(self, det_model, params_o_model, params_r_model, o_inp, a_inp, states_h, training):
         n_batch = tf.shape(a_inp)[0]
 
         h, states_h, = det_model([o_inp, a_inp, states_h[0], states_h[1]], training=training)
-        h_flattened = tf.reshape(h, (-1, *self._h_out_shape))
-        params_o = params_o_model(h_flattened, training=training)
-        params_o = tf.reshape(params_o, (n_batch, 1, *self.s_obs, self._vae_n_embeddings))
-        params_r = params_r_model(h_flattened, training=training)
-        params_r = tf.reshape(params_r, (n_batch, 1, 2))
+        #h_flattened = tf.reshape(h, (-1, *self._h_out_shape))
+        #params_o = params_o_model(h_flattened, training=training)
+        #params_o = tf.reshape(params_o, (n_batch, 1, *self.s_obs, self._vae_n_embeddings))
+        #params_r = params_r_model(h_flattened, training=training)
+        #params_r = tf.reshape(params_r, (n_batch, 1, 2))
+        params_o = params_o_model(h, training=training)
+        params_r = params_r_model(h, training=training)
 
         o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
         #indices = tf.argmax(o_pred, axis=-1)
@@ -281,7 +291,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         return o_pred, r_pred, states_h
 
-    #@tf.function
+    @tf.function
     def call(self, inputs, mask=None, training=None):
         o_in, a_in = inputs
 
@@ -302,7 +312,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         return o_predicted, r_predicted, w_predictors
 
-    #@tf.function
+    @tf.function
     def most_probable_trajectories(self, o_predictions, r_predictions, w_predictors):
         # o_predictions shape: (predictor, batch, timestep, width, height, one_hot_index)
         # push predictor index backwards for easier selection
@@ -322,7 +332,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self._vqvae.trainable = vqvae_is_trainable
         return n_weights
 
-    #@tf.function
+    @tf.function
     def train_step(self, data):
         tf.assert_equal(len(data), 2), f'Need tuple (x, y) for training, got {len(data)}'
 

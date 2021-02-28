@@ -248,3 +248,39 @@ class OneHotToIndex(layers.Layer):
 
         return selected_indices_reshaped
 
+
+def maybe_flatten_time(x, data_rank):
+    tf.assert_greater(data_rank, 0, f'Need at least data_rank 1, got {data_rank}')
+
+    r_in = tf.rank(x)
+    s_in = tf.shape(x)
+    s_in_flat = tf.concat([tf.expand_dims(-1, 0), s_in[-data_rank:]], axis=0)
+
+    tf.assert_less(r_in, data_rank + 3), (f'At most 2 batch dimensions are allowed, got data rank {data_rank} ',
+                                          f'and input rank {r_in}, which is too many batch dimensions.')
+    tf.assert_greater(r_in, data_rank), (f'At least 1 batch dimension is required, got data rank {data_rank} ')
+
+    x_flat, time_dim = tf.cond(r_in - 2 == data_rank,
+                               lambda: (tf.reshape(x, s_in_flat), s_in[1]),
+                               lambda: (x, 0))
+    return x_flat, time_dim
+
+
+def maybe_unflatten_time(x, time_dim):
+    in_rank = tf.rank(x)
+    in_shape = tf.shape(x)
+
+    def had_time_dim():
+        data_dims = tf.gather(in_shape, tf.range(1, tf.maximum(1, in_rank)))
+        out_shape = tf.concat([tf.expand_dims(-1, 0), tf.expand_dims(time_dim, 0), data_dims], axis=0)
+        return tf.reshape(x, out_shape)
+
+    def had_no_time_dim():
+        return x
+
+    x_recon = tf.cond(time_dim > 0,
+                      had_time_dim,
+                      had_no_time_dim)
+
+    return x_recon
+

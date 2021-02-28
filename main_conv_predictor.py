@@ -21,8 +21,9 @@ if gpus:
         print(e)
 
 
-def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, grayscale_input=False, frame_stack=1):
+def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, frame_stack=1):
     assert frame_stack == 1, 'No frame stacking supported currently'
+    grayscale_input = obs_shape[-1] == 1
     vae = VectorQuantizerEMAKeras(train_data_var, num_embeddings=n_embeddings, embedding_dim=d_embeddings,
                                   grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
@@ -46,7 +47,7 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
     return all_predictor
 
 
-def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200):
+def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200, store_results=True):
     if vae.frame_stack == 1:
         all_observations = line_up_observations(memory)
     else:
@@ -64,9 +65,10 @@ def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200
     epochs = np.ceil(steps / steps_per_epoch).astype(np.int32)
     history = vae.fit(train_dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1).history
 
-    vae.save_weights('vae_model/' + file_name)
-    with open('vae_model/' + file_name + '_train_stats', 'wb') as handle:
-        pickle.dump(history, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    if store_results:
+        vae.save_weights('vae_model/' + file_name)
+        with open('vae_model/' + file_name + '_train_stats', 'wb') as handle:
+            pickle.dump(history, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_vae_weights(vae, test_memory, file_name, plots=False):
@@ -86,7 +88,7 @@ def load_vae_weights(vae, test_memory, file_name, plots=False):
         trajs = None
         while trajs is None:
             try:
-                trajs = extract_subtrajectories(test_memory, 3, 100, False)
+                trajs = extract_subtrajectories(test_memory, 4, 100, False)
             except ValueError:
                 trajs = None
 
@@ -142,24 +144,26 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     return encoded_obs, encoded_next_obs, reward_inputs, action_inputs
 
 
-def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n_warmup_steps,  predictor_weights_path, steps_per_epoch=200, batch_size=32):
+def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n_warmup_steps,  predictor_weights_path, steps_per_epoch=200, batch_size=32, store_results=True):
     encoded_obs, encoded_next_obs, rewards, actions = prepare_predictor_data(trajectories, vae, n_traj_steps, n_warmup_steps)
 
     # sanity check
     for i_t in range(n_warmup_steps - 1):
-        assert np.isclose(encoded_obs[:, i_t + 1], encoded_next_obs[:, i_t], atol=0.001).all(), 'Trajectory seems to be corrupted'
+        assert np.isclose(encoded_obs[:, i_t + 1], encoded_next_obs[:, i_t], atol=0.001, rtol=0.001).all(), 'Trajectory seems to be corrupted'
 
     dataset = (tf.data.Dataset.from_tensor_slices(((encoded_obs, actions), (encoded_next_obs, rewards)))
-               .shuffle(100000)
+               .shuffle(10000)
                .repeat(-1)
                .batch(batch_size, drop_remainder=True)
                .prefetch(-1))
 
     epochs = np.ceil(n_train_steps / steps_per_epoch).astype(np.int32)
-    h = predictor.fit(dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1)
-    predictor.save_weights('predictors/' + predictor_weights_path)
-    #with open('predictors/' + predictor_weights_path + '_train_stats', 'wb') as handle:
-    #    pickle.dump(h, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    h = predictor.fit(dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1).history
+
+    if store_results:
+        predictor.save_weights('predictors/' + predictor_weights_path)
+        with open('predictors/' + predictor_weights_path + '_train_stats', 'wb') as handle:
+            pickle.dump(h, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     return h
 
@@ -206,7 +210,6 @@ def single_predictor():
     env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
     #env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
     obs_resize = (84, 84)
-    grayscale_input = False
     collect_samples_per_env = 50000
 
     # vae params #
@@ -220,9 +223,9 @@ def single_predictor():
     n_subtrajectories = 5000
     n_traj_steps = 10
     n_warmup_steps = 5
-    det_filters = 16
-    prob_filters = 16
-    decider_lw = 16
+    det_filters = 64
+    prob_filters = 32
+    decider_lw = 64
     n_models = 3
 
     #tf.config.run_functions_eagerly(True)
@@ -247,11 +250,10 @@ def single_predictor():
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
 
-    vae = vq_vae_net(obs_shape, n_embeddings, d_embedding, train_data_var, grayscale_input, frame_stack)
+    vae = vq_vae_net(obs_shape, n_embeddings, d_embedding, train_data_var, frame_stack)
     #vae.summary()
     all_predictor = predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models)
-    all_predictor.summary()
-    quit()
+    #all_predictor.summary()
 
     # train vae
     #load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
@@ -261,18 +263,18 @@ def single_predictor():
     # extract trajectories and train predictor
     trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, False)
     #all_predictor.load_weights('predictors/' + predictor_weights_path)
-    #train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=32)
+    train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path,
+                    batch_size=32, store_results=True)
     all_predictor.load_weights('predictors/' + predictor_weights_path).expect_partial()
-    all_predictor.summary()
 
-    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
-    rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
+    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 250, 1, 4)
+    rollout_videos(targets, rollouts, w_predictors, 'gridworld_3_models_32_filters', False)
 
     plt.hist(np.array(w_predictors).flatten())
     plt.show()
 
-    pixel_diff_mean = np.mean(targets - rollouts, axis=(0, 2, 3, 4))
-    pixel_diff_var = np.std(targets - rollouts, axis=(0, 2, 3, 4))
+    pixel_diff_mean = np.mean(targets - rollouts, axis=(0, 2, 3, 4)) / (255 * np.prod(obs_shape))
+    pixel_diff_var = np.std(targets - rollouts, axis=(0, 2, 3, 4)) / (255 * np.prod(obs_shape))
     x = range(len(pixel_diff_mean))
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
@@ -315,7 +317,7 @@ def rollout_videos(targets, decoded_rollout_obs, chosen_predictor, video_title, 
 
     if store_animation:
         writer = animation.writers['ffmpeg'](fps=10, bitrate=1800)
-        anim.save('rollout.mp4', writer=writer)
+        anim.save(f'{video_title}.mp4', writer=writer)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,6 @@
-from tensorflow_probability import distributions as tfd
+#from tensorflow_probability import distributions as tfd
+import tensorflow_probability as tfp
+import tensorflow_probability.python.distributions as tfd
 from tf_tools import *
 from keras_vq_vae import VectorQuantizerEMAKeras
 
@@ -165,8 +167,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         tf.debugging.assert_equal(n_warmup, n_predict, ('For closed loop rollout, observations and actions have to be '
                                                         f'provided in equal numbers, but are {n_warmup} and {n_predict}'))
 
-        o_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        r_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
+        o_predictions = tf.TensorArray(tf.float32, size=self.n_models)
+        r_predictions = tf.TensorArray(tf.float32, size=self.n_models)
         for i, (det_model, params_o_model, params_r_model) in enumerate(self.mdl_stack):
             dummy_states_h = self._conv_lstm_start_states(n_batch, self._det_lstm_shape)
             h, _hs, = det_model([o_in, a_in] + dummy_states_h, training=training)
@@ -178,7 +180,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
             #params_r = tf.reshape(params_r, (n_batch, n_time, 2))
             params_o = params_o_model(h, training=training)
             params_r = params_r_model(h, training=training)
-
 
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
@@ -198,7 +199,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         return o_predictions.stack(), r_predictions.stack(), w_predictors
 
     @tf.function
-    def rollout_open_loop(self, inputs, training=None):
+    def _rollout_open_loop(self, inputs, training=None):
         o_in, a_in = inputs
 
         n_batch = tf.shape(o_in)[0]
@@ -216,9 +217,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                                                        f'steps.'))
 
         # store for rollout results
-        o_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        r_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        w_predictors = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
+        o_predictions = tf.TensorArray(tf.float32, size=n_predict)
+        r_predictions = tf.TensorArray(tf.float32, size=n_predict)
+        w_predictors = tf.TensorArray(tf.float32, size=n_predict)
 
         # placeholders for start
         states_h = tf.stack([self._conv_lstm_start_states(n_batch, self._det_lstm_shape) for _ in range(n_models)])
@@ -227,13 +228,13 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         r_pred = tf.stack([self._r_dummy(n_batch) for _ in range(n_models)])
         w_pred = self._w_pred_dummy(n_batch)  # same probability for each model before first observation
 
-        # rollout start
-        for i_t in range(n_predict):
-            #tf.autograph.experimental.set_loop_options(shape_invariants=[(w_pred, tf.TensorShape([None, None, n_models]))])
+        o_warmup, r_warmup, w_warmup = self._rollout_closed_loop((o_in[:, :n_warmup], a_in[:, :n_warmup]), training)
+        print(o_warmup.shape)
 
-            o_step = tf.TensorArray(tf.float32, size=n_models)
-            r_step = tf.TensorArray(tf.float32, size=n_models)
-            states_h_step = tf.TensorArray(tf.float32, size=n_models)
+        for i_t in range(n_predict):
+            o_cache = tf.TensorArray(tf.float32, size=n_models)
+            r_cache = tf.TensorArray(tf.float32, size=n_models)
+            h_state_cache = tf.TensorArray(tf.float32, size=n_models)
 
             # choose next current observation based on predictor weights of last iteration (i.e. given last observation)
             o_next, a_next = self._next_input(o_in_padded, a_in, o_pred, w_pred, i_t, t_start_feedback)
@@ -246,24 +247,25 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
             # do predictions with all predictors
             for i_m, (h_mdl, params_o_mdl, params_r_mdl) in enumerate(self.mdl_stack):
-                o_pred, r_pred, model_h_state = self._open_loop_step(h_mdl, params_o_mdl, params_r_mdl, o_next, a_next, states_h[i_m], training)
-                o_step = o_step.write(i_m, o_pred)
-                r_step = r_step.write(i_m, r_pred)
-                states_h_step = states_h_step.write(i_m, model_h_state)
+                o_pred_mdl, r_pred_mdl, states_h_mdl = self._open_loop_step(h_mdl, params_o_mdl, params_r_mdl, o_next,
+                                                                            a_next, states_h[i_m], training)
+                o_cache = o_cache.write(i_m, o_pred_mdl)
+                r_cache = r_cache.write(i_m, r_pred_mdl)
+                h_state_cache = h_state_cache.write(i_m, states_h_mdl)
 
-            o_pred = o_step.stack()
-            r_pred = r_step.stack()
-            states_h = states_h_step.stack()
+            o_pred = o_cache.stack()
+            r_pred = r_cache.stack()
+            states_h = h_state_cache.stack()
 
             o_predictions = o_predictions.write(i_t, o_pred)
             r_predictions = r_predictions.write(i_t, r_pred)
             w_predictors = w_predictors.write(i_t, w_pred[:, 0])
 
-        # currently, outputs have two time dimensions (timestep, predictor, batch, 1 (timestep), width, height, one_hot_vec)
+        # currently we have two time dims (timestep, predictor, batch, timestep (size 1), width, height, one_hot_vec)
         o_predictions = o_predictions.stack()[:, :, :, 0, ...]
         r_predictions = r_predictions.stack()[:, :, :, 0, ...]
         w_predictors = w_predictors.stack()
-        # currently, outputs are ordered like (timestep, predictor, batch, width, height, one_hot_vec)
+        # currently outputs are ordered like (timestep, predictor, batch, width, height, one_hot_vec)
         # they need to be transposed to (predictor, batch, timestep, width, height, one_hot_vec)
         o_predictions = tf.transpose(o_predictions, [1, 2, 0, 3, 4, 5])
         r_predictions = tf.transpose(r_predictions, [1, 2, 0, 3])
@@ -300,7 +302,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         inputs = (one_hot_obs, a_in)
 
         if self.open_loop_rollout_training:
-            trajectories = self.rollout_open_loop(inputs, training)
+            trajectories = self._rollout_open_loop(inputs, training)
         else:
             trajectories = self._rollout_closed_loop(inputs, training)
 
@@ -324,13 +326,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         o_predictions = tf.gather_nd(o_predictions, i_predictor, batch_dims=2)
         r_predictions = tf.gather_nd(r_predictions, i_predictor, batch_dims=2)
         return o_predictions, r_predictions
-
-    def n_trainable_weights(self):
-        vqvae_is_trainable = self._vqvae.trainable
-        self._vqvae.trainable = False
-        n_weights = len(self.trainable_weights)
-        self._vqvae.trainable = vqvae_is_trainable
-        return n_weights
 
     @tf.function
     def train_step(self, data):

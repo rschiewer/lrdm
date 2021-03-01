@@ -159,7 +159,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
     def _rollout_closed_loop(self, inputs, training=None):
         o_in, a_in = inputs
         n_batch = tf.shape(a_in)[0]
-        n_time = tf.shape(a_in)[1]
 
         n_warmup = tf.shape(o_in)[1]
         n_predict = tf.shape(a_in)[1]
@@ -169,9 +168,10 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         o_predictions = tf.TensorArray(tf.float32, size=self.n_models)
         r_predictions = tf.TensorArray(tf.float32, size=self.n_models)
+        states_h_final = tf.TensorArray(tf.float32, size=self.n_models)
         for i, (det_model, params_o_model, params_r_model) in enumerate(self.mdl_stack):
             dummy_states_h = self._conv_lstm_start_states(n_batch, self._det_lstm_shape)
-            h, _hs, = det_model([o_in, a_in] + dummy_states_h, training=training)
+            h, states_h = det_model([o_in, a_in] + dummy_states_h, training=training)
             #h_flattened = tf.reshape(h, (-1, *self._h_out_shape))
 
             #params_o = params_o_model(h_flattened, training=training)
@@ -188,15 +188,16 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
             o_predictions = o_predictions.write(i, o_pred)
             r_predictions = r_predictions.write(i, r_pred)
+            states_h_final.write(i, states_h)
 
         # retrospectively compute which predictor would have been chosen for which observation
         dummy_states_decider = self._lstm_start_states(n_batch, self._decider_lw)
-        params_decider, _ = self.params_decider([o_in] + dummy_states_decider)
+        params_decider, states_decider_final = self.params_decider([o_in] + dummy_states_decider)
         #w_predictors = tfd.RelaxedOneHotCategorical(self._temp_predictor_picker(training), params_decider).sample()
         w_predictors = tf.nn.softmax(params_decider)
         w_predictors = tf.transpose(w_predictors, [2, 0, 1])  # bring predictor dimension to front
 
-        return o_predictions.stack(), r_predictions.stack(), w_predictors
+        return o_predictions.stack(), r_predictions.stack(), w_predictors, states_h_final.stack(), states_decider_final
 
     @tf.function
     def _rollout_open_loop(self, inputs, training=None):
@@ -228,7 +229,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         r_pred = tf.stack([self._r_dummy(n_batch) for _ in range(n_models)])
         w_pred = self._w_pred_dummy(n_batch)  # same probability for each model before first observation
 
-        o_warmup, r_warmup, w_warmup = self._rollout_closed_loop((o_in[:, :n_warmup], a_in[:, :n_warmup]), training)
+        o_warmup, r_warmup, w_warmup, states_h_warmup, states_decider_warmup = self._rollout_closed_loop((o_in[:, :n_warmup], a_in[:, :n_warmup]), training)
         print(o_warmup.shape)
 
         for i_t in range(n_predict):
@@ -302,11 +303,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         inputs = (one_hot_obs, a_in)
 
         if self.open_loop_rollout_training:
-            trajectories = self._rollout_open_loop(inputs, training)
+            o_predicted, r_predicted, w_predictors = self._rollout_open_loop(inputs, training)
         else:
-            trajectories = self._rollout_closed_loop(inputs, training)
-
-        o_predicted, r_predicted, w_predictors = trajectories
+            o_predicted, r_predicted, w_predictors, _, _ = self._rollout_closed_loop(inputs, training)
 
         if not training:
             o_predicted, r_predicted = self.most_probable_trajectories(o_predicted, r_predicted, w_predictors)

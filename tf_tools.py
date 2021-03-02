@@ -187,34 +187,30 @@ class InflateActionLayer(layers.Layer):
         return inflated_reshaped
 
 
-class StatefulConvLSTM2DCell(layers.Layer):
+class StatefulConvLSTM2D(layers.Layer):
 
     def __init__(self, filters, kernel_size, **kwargs):
         """
         Returns only the last timestep output. Handles statefulness internally.
         """
-        padding = kwargs.pop('padding', 'SAME')
-
-        super(StatefulConvLSTM2DCell, self).__init__()
+        super(StatefulConvLSTM2D, self).__init__()
 
         self.filters = filters
-        self.nested_layer = tf.keras.layers.ConvLSTM2D(filters, kernel_size=kernel_size, padding=padding,
-                                                       return_state=True, **kwargs)
-        self.states = None
+        self.nested_layer = tf.keras.layers.ConvLSTM2D(filters, kernel_size=kernel_size, return_state=True, **kwargs)
+        self.state = None
 
     def reset_state(self):
-        #tf.print('resetting states')
-        self.states = None
+        self.state = None
 
     def call(self, inputs, **kwargs):
-        if len(tf.shape(inputs)) == 4:  # add time dimension if none is present
-            inputs = tf.expand_dims(inputs, 1)
+        #if len(tf.shape(inputs)) == 4:  # add time dimension if none is present
+        #    inputs = tf.expand_dims(inputs, 1)
         # providing 'None' argument for initial_state works as well, so no dummy first state has to be created
         #if self.states is None:
         #    in_shape = (tf.shape(inputs)[0], tf.shape(inputs)[2], tf.shape(inputs)[3])
         #    self.states = [tf.zeros(shape=(*in_shape,  self.filters)), tf.zeros(shape=(*in_shape,  self.filters))]
 
-        output, *self.states = self.nested_layer(inputs, initial_state=self.states, **kwargs)
+        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
 
         return output
 

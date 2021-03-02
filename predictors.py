@@ -47,6 +47,23 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self._loss_tracker = tf.keras.metrics.Mean(name='loss')
         self._predictor_weights_tracker = [tf.keras.metrics.Mean(name=f'predictor_{i}_weight') for i in range(n_models)]
 
+        self.stateful_recurrent_layers = self._find_layer_type(StatefulConvLSTM2D)
+
+    def _find_layer_type(self, layer_type):
+        found = []
+        def add_if_type(layer):
+            if isinstance(layer, layer_type):
+                found.append(layer)
+
+        for layer in self.params_decider.layers:
+            add_if_type(layer)
+        for det, params_o, params_r in self.mdl_stack:
+            for layer in det.layers: add_if_type(layer)
+            for layer in params_o.layers: add_if_type(layer)
+            for layer in params_r.layers: add_if_type(layer)
+
+        return found
+
     def _gen_params_decider(self, s_obs, n_mdl, decider_lw, vqvae):
         def obs_flatten(inp):
             n_batch = tf.shape(inp)[0]
@@ -109,6 +126,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         h = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(h)
         h = layers.TimeDistributed(layers.Conv2D(det_filters, kernel_size=3, padding='SAME', activation='relu'))(h)
         h = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(h)
+        #h = StatefulConvLSTM2D(det_filters, kernel_size=3, return_sequences=True, padding='SAME')(h)
         h, *h_states = layers.ConvLSTM2D(det_filters, kernel_size=3, return_state=True, return_sequences=True, padding='SAME', name='h_out')(h, initial_state=[lstm_c, lstm_h])
         h_skip = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=1, padding='SAME', activation=None))(h_in)
         h = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=1, padding='SAME', activation=None))(h)
@@ -279,9 +297,14 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         return o_pred, r_pred, states_h
 
+    def _reset_recurrent_layers(self):
+        for l in self.stateful_recurrent_layers:
+            l.reset_state()
+
     @tf.function
     def call(self, inputs, mask=None, training=None):
         o_in, a_in = inputs
+        self._reset_recurrent_layers()
 
         # convert observations to one_hot
         one_hot_obs = tf.one_hot(tf.cast(o_in, tf.int32), self._vae_n_embeddings, axis=-1)

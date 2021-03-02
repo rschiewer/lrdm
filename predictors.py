@@ -224,10 +224,10 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         #o_warmup, r_warmup, w_warmup = self._rollout_closed_loop((o_in[:, :n_warmup], a_in[:, :n_warmup]), training)
 
-        o_cache = tf.TensorArray(tf.float32, size=n_models)
-        r_cache = tf.TensorArray(tf.float32, size=n_models)
-        h_state_cache = tf.TensorArray(tf.float32, size=n_models)
         for i_t in range(n_predict):
+            o_cache = tf.TensorArray(tf.float32, size=n_models)
+            r_cache = tf.TensorArray(tf.float32, size=n_models)
+            h_state_cache = tf.TensorArray(tf.float32, size=n_models)
 
             # choose next current observation based on predictor weights of last iteration (i.e. given last observation)
             o_next, a_next = self._next_input(o_in, a_in, o_pred, w_pred, i_t, t_start_feedback)
@@ -268,8 +268,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
     @tf.function
     def _open_loop_step(self, det_model, params_o_model, params_r_model, o_inp, a_inp, states_h, training):
-        n_batch = tf.shape(a_inp)[0]
-
         h, states_h, = det_model([o_inp, a_inp, states_h[0], states_h[1]], training=training)
         params_o = params_o_model(h, training=training)
         params_r = params_r_model(h, training=training)
@@ -284,7 +282,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
     @tf.function
     def call(self, inputs, mask=None, training=None):
         o_in, a_in = inputs
-        n_warmup = tf.shape(o_in)[1]
 
         # convert observations to one_hot
         one_hot_obs = tf.one_hot(tf.cast(o_in, tf.int32), self._vae_n_embeddings, axis=-1)
@@ -331,17 +328,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                 o_groundtruth = tf.one_hot(tf.cast(y[0], tf.int32), self._vae_n_embeddings, dtype=tf.float32)
                 r_groundtruth = y[1]
 
-                #if self.summary_writer:
-                #    with self.summary_writer.as_default():
-                #        tf.summary.trace_on(graph=True, profiler=True)
-                #        o_predictions, r_predictions, w_predictors = self(x, training=True)
-                #        tf.summary.trace_export(name='Convolutional_Predictor_Trace', step=self._train_step.value(), profiler_outdir='graph')
-                #else:
                 o_predictions, r_predictions, w_predictors = self(x, training=True)
 
                 total_loss = 0.0
-                # this might be wrong, in every timestep only the chosen predictor should be updated
-                # but currently, there are all predictors updated weighted with the probability that they are chosen
                 for i in range(self.n_models):
                     o_pred = o_predictions[i]
                     r_pred = r_predictions[i]
@@ -350,7 +339,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                     curr_mdl_r_err = tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
                     total_loss += tf.reduce_mean(curr_mdl_obs_err) + tf.reduce_mean(curr_mdl_r_err)
                     total_loss += 0.01 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
-                    total_loss += 0.01 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                    total_loss += 0.001 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
             # Compute gradients
             gradients = tape.gradient(total_loss, self.trainable_weights)
@@ -368,15 +357,12 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
             self._train_step.assign(self._train_step.value() + 1)
 
-            #weight_stats = {f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(tf.shape(w_predictors)[0])}
-            return {'loss': self._loss_tracker.result(),
-                    'most_probable_observation_error': self._obs_accuracy.result(),
-                    'most_probable_r_error': self._rew_accuracy.result(),
-                    't': self._temp(True),
-                    'w0': tf.reduce_mean(w_predictors, axis=[1, 2])[0],
-                    'w1': tf.reduce_mean(w_predictors, axis=[1, 2])[1],
-                    'w2': tf.reduce_mean(w_predictors, axis=[1, 2])[2]
-                    }#.update(weight_stats)
+            stats_dict =  {'loss': self._loss_tracker.result(),
+                           'most_probable_observation_error': self._obs_accuracy.result(),
+                           'most_probable_r_error': self._rew_accuracy.result(),
+                           't': self._temp(True)}
+            stats_dict.update({f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(self.n_models)})
+            return stats_dict
 
     @tf.function
     def _next_input(self, o_in, a_in, o_last, w_pred, i_t, feedback):

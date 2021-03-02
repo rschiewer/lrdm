@@ -187,49 +187,31 @@ class InflateActionLayer(layers.Layer):
         return inflated_reshaped
 
 
-class StatefulConvLSTM2D(layers.Layer):
+class StatefulRecurrentLayer(layers.Layer):
+    def __init__(self, nested_layer):
+        super(StatefulRecurrentLayer, self).__init__(name='stateful_recurrent_layer_wrapper')
 
+        self.nested_layer = nested_layer
+        self.state = None
+
+    def reset_state(self):
+        self.state = None
+
+    def call(self, inputs, **kwargs):
+        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
+        return output
+
+
+class StatefulConvLSTM2D(StatefulRecurrentLayer):
     def __init__(self, filters, kernel_size, **kwargs):
-        """
-        Returns only the last timestep output. Handles statefulness internally.
-        """
-        super(StatefulConvLSTM2D, self).__init__()
-
-        self.filters = filters
-        self.nested_layer = tf.keras.layers.ConvLSTM2D(filters, kernel_size=kernel_size, return_state=True, **kwargs)
-        self.state = None
-
-    def reset_state(self):
-        self.state = None
-
-    def call(self, inputs, **kwargs):
-        #if len(tf.shape(inputs)) == 4:  # add time dimension if none is present
-        #    inputs = tf.expand_dims(inputs, 1)
-        # providing 'None' argument for initial_state works as well, so no dummy first state has to be created
-        #if self.states is None:
-        #    in_shape = (tf.shape(inputs)[0], tf.shape(inputs)[2], tf.shape(inputs)[3])
-        #    self.states = [tf.zeros(shape=(*in_shape,  self.filters)), tf.zeros(shape=(*in_shape,  self.filters))]
-
-        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
-
-        return output
+        nested_layer = tf.keras.layers.ConvLSTM2D(filters, kernel_size=kernel_size, return_state=True, **kwargs)
+        super(StatefulConvLSTM2D, self).__init__(nested_layer)
 
 
-class StatefulLSTM(layers.Layer):
-
+class StatefulLSTM(StatefulRecurrentLayer):
     def __init__(self, lw, **kwargs):
-        super(StatefulLSTM, self).__init__(**kwargs)
-
-        self.lw = lw
-        self.nested_layer = tf.keras.layers.LSTM(lw, return_state=True, **kwargs)
-        self.state = None
-
-    def reset_state(self):
-        self.state = None
-
-    def call(self, inputs, **kwargs):
-        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
-        return output
+        nested_layer = tf.keras.layers.LSTM(lw, return_state=True, **kwargs)
+        super(StatefulLSTM, self).__init__(nested_layer)
 
 
 class OneHotToIndex(layers.Layer):

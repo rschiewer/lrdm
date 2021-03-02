@@ -503,14 +503,14 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
     def decode_from_vectors(self, embeddings):
         embeddings, timesteps = maybe_flatten_time(embeddings, 3)
-        x_recon = self._decode(embeddings)
+        x_recon = self._decoder(embeddings)
         x_recon = maybe_unflatten_time(x_recon, timesteps)
         return x_recon
 
     def decode_from_indices(self, indices):
         indices, timesteps = maybe_flatten_time(indices, 2)
         embeddings = self._vqvae.codebook_lookup(indices)
-        x_recon = self._decode(embeddings)
+        x_recon = self._decoder(embeddings)
         x_recon = maybe_unflatten_time(x_recon, timesteps)
         return x_recon
 

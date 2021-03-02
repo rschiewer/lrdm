@@ -215,6 +215,23 @@ class StatefulConvLSTM2D(layers.Layer):
         return output
 
 
+class StatefulLSTM(layers.Layer):
+
+    def __init__(self, lw, **kwargs):
+        super(StatefulLSTM, self).__init__(**kwargs)
+
+        self.lw = lw
+        self.nested_layer = tf.keras.layers.LSTM(lw, return_state=True, **kwargs)
+        self.state = None
+
+    def reset_state(self):
+        self.state = None
+
+    def call(self, inputs, **kwargs):
+        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
+        return output
+
+
 class OneHotToIndex(layers.Layer):
 
     def __init__(self, **kwargs):

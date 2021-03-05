@@ -1,6 +1,5 @@
 import tensorflow as tf
 import tensorflow.keras.layers as tfkl
-from tf_tools import maybe_unflatten_time, maybe_flatten_time
 
 
 class ExponentialMovingAverage(tfkl.Layer):
@@ -255,25 +254,6 @@ class QuantizationLayerEMA(tfkl.Layer):
         w = tf.transpose(self.embeddings, [1, 0])
         return tf.nn.embedding_lookup(w, encoding_indices)
 
-    @tf.function
-    def codebook_lookup_straight_through(self, encoding_indices_one_hot):
-        """Takes almost one-hot encoded float indices and returns embedding vectors, provides straight-through gradient
-        to circumvent argmax for lookup."""
-
-        tf.assert_less(tf.rank(encoding_indices_one_hot), 6, (f'Encoding index tensor should have rank 4 of 5, but '
-                                                              f'has {tf.rank(encoding_indices_one_hot)}'))
-
-        s_in = tf.shape(encoding_indices_one_hot)
-        s_soft_embeddings = tf.concat([s_in[:-1], tf.expand_dims(self.embedding_dim, 0)], axis=0)
-        w = tf.transpose(self.embeddings, [1, 0])  # matrix with embedding vectors as row vectors
-
-        hard_embeddings = tf.nn.embedding_lookup(w, tf.argmax(encoding_indices_one_hot, -1))
-        encoding_indices_flat = tf.reshape(encoding_indices_one_hot, (-1, self.num_embeddings))
-        soft_embeddings_flat = tf.matmul(encoding_indices_flat, w)
-        soft_embeddings = tf.reshape(soft_embeddings_flat, s_soft_embeddings)
-
-        return hard_embeddings + soft_embeddings - tf.stop_gradient(soft_embeddings)
-
 
 class ResidualStackLayer(tfkl.Layer):
 
@@ -348,7 +328,7 @@ class Encoder(tfkl.Layer):
 
 class Decoder(tfkl.Layer):
 
-    def __init__(self, num_hiddens, num_residual_layers, num_residual_hiddens, grayscale_out=False, **kwargs):
+    def __init__(self, num_hiddens, num_residual_layers, num_residual_hiddens, **kwargs):
         super(Decoder, self).__init__(**kwargs)
         self._num_hiddens = num_hiddens
         self._num_residual_layers = num_residual_layers
@@ -371,13 +351,13 @@ class Decoder(tfkl.Layer):
             padding='same',
             name="dec_2")
         self._dec_3 = tfkl.Conv2DTranspose(
-            filters=1 if grayscale_out else 3,
+            filters=3,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="dec_3")
 
-    def call_with_reshape(self, x, training=None, **kwargs):
+    def call(self, x, training=None, **kwargs):
         s_in = x.get_shape().as_list()
 
         tf.assert_less(len(s_in), 6), f'Decoder can at process at most 2 batch dimensions (5D tensor), got {len(s_in)}'
@@ -395,7 +375,7 @@ class Decoder(tfkl.Layer):
             x_recon = tf.reshape(x_recon, (-1, s_in[1], s_rec[-3], s_rec[-2], s_rec[-1]))
         return x_recon
 
-    def call(self, x, training=None, **kwargs):
+    def call_no_reshape(self, x, training=None, **kwargs):
         h = self._dec_1(x)
         h = self._residual_stack(h)
         h = tf.nn.relu(self._dec_2(h))
@@ -418,7 +398,7 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         super(VectorQuantizerEMAKeras, self).__init__()
 
         self._encoder = Encoder(num_hiddens, num_residual_layers, num_residual_hiddens)
-        self._decoder = Decoder(num_hiddens, num_residual_layers, num_residual_hiddens, grayscale_out=grayscale_input)
+        self._decoder = Decoder(num_hiddens, num_residual_layers, num_residual_hiddens)
         self._vqvae = QuantizationLayerEMA(embedding_dim=embedding_dim, num_embeddings=num_embeddings,
                                            commitment_cost=commitment_cost, decay=decay)
         self._pre_vq_conv1 = tfkl.Conv2D(embedding_dim, kernel_size=(1, 1), strides=(1, 1), name='to_vq')
@@ -431,15 +411,16 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         self._total_loss = tf.keras.metrics.Mean('total_loss')
         self._reconstruction_loss = tf.keras.metrics.Mean('reconstruction_loss')
 
+    def _decode(self, vq_output):
+        x_recon = self._decoder(vq_output)
+        if self._grayscale_input:  # in case of grayscale images, only take first channel from 3-channel decoder
+            x_recon = x_recon[..., 0, tf.newaxis]
+        return x_recon
 
     def call(self, inputs, training=None, **kwargs):
-        inputs, timesteps = maybe_flatten_time(inputs, 3)
-
         z = self._pre_vq_conv1(self._encoder(inputs))
         vq_output = self._vqvae(z, training=training)
-        x_recon = self._decoder(vq_output)
-
-        x_recon = maybe_unflatten_time(x_recon, timesteps)
+        x_recon = self._decode(vq_output)
         #recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
         #self.add_metric(recon_error, 'reconstruction_loss')
 
@@ -457,69 +438,47 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         return index_mat.get_shape()[1:]
 
     def encode_to_vectors(self, inputs):
-        inputs, timesteps = maybe_flatten_time(inputs, 3)
-
         z = self._pre_vq_conv1(self._encoder(inputs))
         vq_output = self._vqvae.encode_to_embedding_vectors(z)
-
-        vq_output = maybe_unflatten_time(vq_output, timesteps)
         return vq_output
 
     def encode_to_indices(self, inputs):
         if isinstance(inputs, tf.data.Dataset):
-            vq_outputs_list = []
+            z_list = []
             for batch in inputs:
-                batch, timesteps = maybe_flatten_time(batch, 3)
                 z = self._pre_vq_conv1(self._encoder(batch))
-                vq_output_batch = self._vqvae.encode_to_indices(z)
-                vq_output_batch = maybe_unflatten_time(vq_output_batch, timesteps)
-                vq_outputs_list.append(vq_output_batch)
-            vq_output = tf.concat(vq_outputs_list, axis=0)
+                z_list.append(self._vqvae.encode_to_indices(z))
+            vq_output = tf.concat(z_list, axis=0)
         else:
-            inputs, timesteps = maybe_flatten_time(inputs, 3)
             z = self._pre_vq_conv1(self._encoder(inputs))
             vq_output = self._vqvae.encode_to_indices(z)
-            vq_output = maybe_unflatten_time(vq_output, timesteps)
         return vq_output
 
     def encode_to_indices_onehot(self, inputs):
         if isinstance(inputs, tf.data.Dataset):
-            vq_outputs_list = []
+            z_list = []
             for batch in inputs:
-                batch, timesteps = maybe_flatten_time(batch, 3)
                 z = self._pre_vq_conv1(self._encoder(batch))
                 embed_indices = self._vqvae.encode_to_indices(z)
-                embed_indices_onehot = tf.one_hot(embed_indices, self.num_embeddings, axis=-1)
-                embed_indices_onehot = maybe_unflatten_time(embed_indices_onehot, timesteps)
-                vq_outputs_list.append(embed_indices_onehot)
-            vq_output = tf.concat(vq_outputs_list, axis=0)
+                z_list.append(tf.one_hot(embed_indices, self.num_embeddings, axis=-1))
+            vq_output = tf.concat(z_list, axis=0)
         else:
-            inputs, timesteps = maybe_flatten_time(inputs, 3)
             z = self._pre_vq_conv1(self._encoder(inputs))
             embed_indices = self._vqvae.encode_to_indices(z)
             vq_output = tf.one_hot(embed_indices, self.num_embeddings, axis=-1)
-            vq_output = maybe_unflatten_time(vq_output, timesteps)
         return vq_output
 
     def decode_from_vectors(self, embeddings):
-        embeddings, timesteps = maybe_flatten_time(embeddings, 3)
-        x_recon = self._decoder(embeddings)
-        x_recon = maybe_unflatten_time(x_recon, timesteps)
+        x_recon = self._decode(embeddings)
         return x_recon
 
     def decode_from_indices(self, indices):
-        indices, timesteps = maybe_flatten_time(indices, 2)
         embeddings = self._vqvae.codebook_lookup(indices)
-        x_recon = self._decoder(embeddings)
-        x_recon = maybe_unflatten_time(x_recon, timesteps)
+        x_recon = self._decode(embeddings)
         return x_recon
 
     def indices_to_embeddings(self, indices):
         embeddings = self._vqvae.codebook_lookup(indices)
-        return embeddings
-
-    def indices_to_embeddings_straight_through(self, indices):
-        embeddings = self._vqvae.codebook_lookup_straight_through(indices)
         return embeddings
 
     @tf.function

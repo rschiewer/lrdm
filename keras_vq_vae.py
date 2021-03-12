@@ -254,6 +254,25 @@ class QuantizationLayerEMA(tfkl.Layer):
         w = tf.transpose(self.embeddings, [1, 0])
         return tf.nn.embedding_lookup(w, encoding_indices)
 
+    @tf.function
+    def codebook_lookup_straight_through(self, encoding_indices_one_hot):
+        """Takes almost one-hot encoded float indices and returns embedding vectors, provides straight-through gradient
+        to circumvent argmax for lookup."""
+
+        tf.assert_less(tf.rank(encoding_indices_one_hot), 6, (f'Encoding index tensor should have rank 4 of 5, but '
+                                                              f'has {tf.rank(encoding_indices_one_hot)}'))
+
+        s_in = tf.shape(encoding_indices_one_hot)
+        s_soft_embeddings = tf.concat([s_in[:-1], tf.expand_dims(self.embedding_dim, 0)], axis=0)
+        w = tf.transpose(self.embeddings, [1, 0])  # matrix with embedding vectors as row vectors
+
+        hard_embeddings = tf.nn.embedding_lookup(w, tf.argmax(encoding_indices_one_hot, -1))
+        encoding_indices_flat = tf.reshape(encoding_indices_one_hot, (-1, self.num_embeddings))
+        soft_embeddings_flat = tf.matmul(encoding_indices_flat, w)
+        soft_embeddings = tf.reshape(soft_embeddings_flat, s_soft_embeddings)
+
+        return hard_embeddings - soft_embeddings + tf.stop_gradient(soft_embeddings)
+
 
 class ResidualStackLayer(tfkl.Layer):
 
@@ -479,6 +498,10 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
     def indices_to_embeddings(self, indices):
         embeddings = self._vqvae.codebook_lookup(indices)
+        return embeddings
+
+    def indices_to_embeddings_straight_through(self, indices):
+        embeddings = self._vqvae.codebook_lookup_straight_through(indices)
         return embeddings
 
     @tf.function

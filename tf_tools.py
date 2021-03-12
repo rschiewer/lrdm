@@ -187,28 +187,91 @@ class InflateActionLayer(layers.Layer):
         return inflated_reshaped
 
 
-class StatefulRecurrentLayer(layers.Layer):
-    def __init__(self, nested_layer):
-        super(StatefulRecurrentLayer, self).__init__(name='stateful_recurrent_layer_wrapper')
+class StatefulLSTMLayer(layers.Layer):
+    def __init__(self, nested_layer, batch_size):
+        super(StatefulLSTMLayer, self).__init__(name='stateful_recurrent_layer_wrapper')
 
         self.nested_layer = nested_layer
-        self.state = None
+
+    def build(self, input_shape):
+        super(StatefulLSTMLayer, self).build(input_shape)
+        self.nested_layer.build(input_shape)
+
+        state = getattr(self, 'state', None)
+        if state is None:
+            state = tf.TensorArray(tf.float32, size=2, dynamic_size=False, clear_after_read=False, infer_shape=False)
+            init_state = self.nested_layer.get_initial_state(tf.zeros((1, 1, *input_shape[2:])))
+            state = state.write(0, init_state[0])
+            state = state.write(1, init_state[1])
+            self.state = state
+
+        zero_state = getattr(self, 'zero_state', None)
+        if zero_state is None:
+            self.zero_state = tf.Variable(True, trainable=False, dtype=tf.bool)
 
     def reset_state(self):
-        self.state = None
+        self.zero_state.assign(True)
 
     def call(self, inputs, **kwargs):
-        output, *self.state = self.nested_layer(inputs, initial_state=self.state, **kwargs)
+        def true_fn():
+            self.zero_state.assign(False)
+            return self.nested_layer.get_initial_state(inputs)
+        def false_fn():
+            state_0 = self.state.read(0)
+            state_1 = self.state.read(1)
+            return [state_0, state_1]
+        init_state = tf.cond(self.zero_state, true_fn, false_fn)
+
+        output, *next_state = self.nested_layer(inputs, initial_state=init_state, **kwargs)
+        self.state = self.state.write(0, next_state[0])
+        self.state = self.state.write(1, next_state[1])
         return output
 
 
-class StatefulConvLSTM2D(StatefulRecurrentLayer):
+class StatefulLSTMLayerEager(layers.Layer):
+    def __init__(self, nested_layer):
+        super(StatefulLSTMLayer, self).__init__(name='stateful_recurrent_layer_wrapper')
+
+        self.nested_layer = nested_layer
+        self.state = tf.TensorArray(tf.float32, size=2, dynamic_size=False, clear_after_read=False, infer_shape=False)
+        self.zero_state = tf.Variable(True, trainable=False, dtype=tf.bool)
+
+    def build(self, input_shape):
+        super(StatefulLSTMLayer, self).build(input_shape)
+
+        self.nested_layer.build(input_shape)
+        dummy_inp = tf.zeros((1, 1, *input_shape[2:]))
+        init_state = self.nested_layer.get_initial_state(dummy_inp)
+        self.state = self.state.write(0, init_state[0])
+        self.state = self.state.write(1, init_state[1])
+
+
+    def reset_state(self):
+        self.zero_state.assign(True)
+
+    def call(self, inputs, **kwargs):
+        def true_fn():
+            self.zero_state.assign(False)
+            return self.nested_layer.get_initial_state(inputs)
+        def false_fn():
+            state_0 = self.state.read(0)
+            state_1 = self.state.read(1)
+            return [state_0, state_1]
+        init_state = tf.cond(self.zero_state, true_fn, false_fn)
+
+        output, *next_state = self.nested_layer(inputs, initial_state=init_state, **kwargs)
+        self.state = self.state.write(0, next_state[0])
+        self.state = self.state.write(1, next_state[1])
+        return output
+
+
+class StatefulConvLSTM2D(StatefulLSTMLayer):
     def __init__(self, filters, kernel_size, **kwargs):
         nested_layer = tf.keras.layers.ConvLSTM2D(filters, kernel_size=kernel_size, return_state=True, **kwargs)
         super(StatefulConvLSTM2D, self).__init__(nested_layer)
 
 
-class StatefulLSTM(StatefulRecurrentLayer):
+class StatefulLSTM(StatefulLSTMLayer):
     def __init__(self, lw, **kwargs):
         nested_layer = tf.keras.layers.LSTM(lw, return_state=True, **kwargs)
         super(StatefulLSTM, self).__init__(nested_layer)

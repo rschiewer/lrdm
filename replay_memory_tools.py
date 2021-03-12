@@ -70,6 +70,48 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
     return subtrajectories
 
 
+def blockworld_position_images(mem):
+    n_envs = mem['env'].max() + 1
+    gallery = [[] for _ in range(n_envs)]
+    env_sizes = []
+
+    # find dimensions of environments
+    for i_env in range(n_envs):
+        env_samples = mem[mem['env'] == i_env]
+        min_x = min((int(pos[0]) for pos in env_samples['pos']))
+        min_y = min((int(pos[1]) for pos in env_samples['pos']))
+        max_x = max((int(pos[0]) for pos in env_samples['pos']))
+        max_y = max((int(pos[1]) for pos in env_samples['pos']))
+        env_sizes.append((min_x, max_x, min_y, max_y))
+        assert min_x == 0
+        assert min_y == 0
+
+    # prepare grid to hold observations for every position
+    gallery_size = 0
+    for size, cur_env_gallery in zip(env_sizes, gallery):
+        for x_coord in range(size[1] + 1):
+            cur_env_gallery.append([])
+            for y_coord in range(size[3] + 1):
+                cur_env_gallery[x_coord].append(None)
+                gallery_size += 1
+
+    added_places = 0
+    for sample in mem:
+        env_idx = sample['env']
+        x = int(sample['pos'][0])
+        y = int(sample['pos'][1])
+        if gallery[env_idx][x][y] is None:
+            gallery[env_idx][x][y] = sample['s']
+            added_places += 1
+
+        if added_places == gallery_size:
+            break
+
+
+    return gallery
+
+
+
 def _run_env(env, n_samples, idx):
     print(f'Starting environment {idx + 1}')
     memory = []
@@ -78,7 +120,6 @@ def _run_env(env, n_samples, idx):
     while True:
         last_observation = env.reset()
         t = 0
-        #for t in range(env._max_episode_steps):
         while True:
             action = env.action_space.sample()
             observation, reward, done, info = env.step(action)

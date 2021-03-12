@@ -216,9 +216,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         # pad o_in with zeros to avoid out of bounds indexing in _next_input (if-else tf autograph bullshit)
         o_in_padded = tf.concat([o_in, tf.zeros((n_batch, n_predict - n_warmup, *self.s_obs, self._vae_n_embeddings))], axis=1)
 
-        tf.debugging.assert_less(n_warmup, n_predict, ('For rollout, less observations than actions are expected, '
-                                                       f'but I got {n_warmup} observation and {n_predict} action '
-                                                       f'steps.'))
+        #tf.debugging.assert_less(n_warmup, n_predict, ('For rollout, less observations than actions are expected, '
+        #                                               f'but I got {n_warmup} observation and {n_predict} action '
+        #                                               f'steps.'))
 
         # store for rollout results
         o_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
@@ -369,7 +369,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                 curr_mdl_obs_err = tf.reduce_sum(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
                 curr_mdl_r_err = tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
                 total_loss += tf.reduce_mean(curr_mdl_obs_err) + tf.reduce_mean(curr_mdl_r_err)
-                total_loss += 0.01 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.001 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
                 total_loss += 0.001 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
         # Compute gradients

@@ -101,14 +101,14 @@ def blockworld_position_images(mem):
         x = int(sample['pos'][0])
         y = int(sample['pos'][1])
         if gallery[env_idx][x][y] is None:
-            gallery[env_idx][x][y] = sample['s']
+            gallery[env_idx][x][y] = sample['s_']
             added_places += 1
 
         if added_places == gallery_size:
             break
 
 
-    return gallery
+    return gallery, n_envs, env_sizes
 
 
 

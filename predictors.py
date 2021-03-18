@@ -3,9 +3,9 @@ from tf_tools import *
 from keras_vq_vae import VectorQuantizerEMAKeras
 
 
-class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Model):
+class RecurrentPredictor(keras.Model):
 
-    def __init__(self, observation_shape, n_actions, vqvae: VectorQuantizerEMAKeras, batch_size,
+    def __init__(self, observation_shape, n_actions, vqvae: VectorQuantizerEMAKeras,
                  det_filters=64, prob_filters=64, n_models=1, decider_lw=64,
                  open_loop_rollout_training=True, **kwargs):
         assert len(observation_shape) == 2, f'Expecting (w, h) shaped cb vector index matrices, got {len(observation_shape)}D'
@@ -17,7 +17,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         else:
             self.summary_writer = None
 
-        super(AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor, self).__init__(**kwargs)
+        super(RecurrentPredictor, self).__init__(**kwargs)
 
         self.s_obs = tuple(observation_shape)
         self.action_shape = (1,)
@@ -29,7 +29,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self._decider_lw = decider_lw
         self.open_loop_rollout_training = open_loop_rollout_training
         self.n_models = n_models
-        self.batch_size = batch_size
         self._vqvae = vqvae
         self.straight_through_gradient = False
 
@@ -75,8 +74,6 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         # stochastic model to implement p(r_t+1 | o_t, a_t, h_t)
         in_h = layers.Input((None, *h_out_shape), name='p_r_in')
         x_params_r = layers.TimeDistributed(layers.Flatten())(in_h)
-        x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
-        #x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
         #x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(2, activation=None, name='p_r_out'))(x_params_r)
@@ -333,7 +330,7 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
         self._vqvae.trainable = vqvae_is_trainable
         return n_weights
 
-    @tf.function
+    #@tf.function
     def train_step(self, data):
         tf.assert_equal(len(data), 2), f'Need tuple (x, y) for training, got {len(data)}'
 
@@ -369,8 +366,9 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
                 curr_mdl_obs_err = tf.reduce_sum(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
                 curr_mdl_r_err = tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
                 total_loss += tf.reduce_mean(curr_mdl_obs_err) + tf.reduce_mean(curr_mdl_r_err)
-                total_loss += 0.001 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
-                total_loss += 0.001 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+            #total_loss += #TODO: predictor entropy bonus here
 
         # Compute gradients
         gradients = tape.gradient(total_loss, self.trainable_weights)
@@ -390,8 +388,8 @@ class AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(keras.Mode
 
         weight_stats = {f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(self.n_models)}
         stats = {'loss': self._loss_tracker.result(),
-                 'most_probable_observation_error': self._obs_accuracy.result(),
-                 'most_probable_r_error': self._rew_accuracy.result(),
+                 'mp_o_err': self._obs_accuracy.result(),
+                 'mp_r_err': self._rew_accuracy.result(),
                  't': self._temp(True)}
         stats.update(weight_stats)
         return stats

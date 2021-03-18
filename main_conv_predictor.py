@@ -30,15 +30,15 @@ def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, frame_stac
     return vae
 
 
-def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, batch_size):
+def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
-    all_predictor = AutoregressiveProbabilisticFullyConvolutionalMultiHeadPredictor(vae_index_matrix_shape, n_actions,
-                                                                                    vae, batch_size,
-                                                                                    open_loop_rollout_training=True,
-                                                                                    det_filters=det_filters,
-                                                                                    prob_filters=prob_filters,
-                                                                                    decider_lw=decider_lw,
-                                                                                    n_models=n_models)  # , debug_log=True)
+    all_predictor = RecurrentPredictor(vae_index_matrix_shape, n_actions,
+                                       vae,
+                                       open_loop_rollout_training=True,
+                                       det_filters=det_filters,
+                                       prob_filters=prob_filters,
+                                       decider_lw=decider_lw,
+                                       n_models=n_models)  # , debug_log=True)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
     net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
     net_s_act = tf.TensorShape((None, None, 1))
@@ -233,9 +233,9 @@ def split_predictor():
     prob_filters = 128
     decider_lw = 1
     n_models = 1
-    pred_batch_size = 64
+    pred_batch_size = 32
 
-    #tf.config.run_functions_eagerly(True)
+    tf.config.run_functions_eagerly(True)
 
     # start training procedure #
 
@@ -253,7 +253,7 @@ def split_predictor():
 
     vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, frame_stack)
     #vae.summary()
-    all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters, decider_lw, n_models, pred_batch_size)
+    all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters, decider_lw, n_models)
 
     #all_predictor.summary()
 

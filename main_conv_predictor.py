@@ -1,11 +1,10 @@
-from old_predictors import AutoregressiveMultiHeadFullyConvolutionalPredictor, \
-    AutoregressiveProbabilisticFullyConvolutionalPredictor
 from predictors import *
-#from vq_vae import *
 from keras_vq_vae import VectorQuantizerEMAKeras
 from replay_memory_tools import *
 from matplotlib import pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from blockworld import *
+import gym_minigrid
 
 #os.environ['TF_CPP_MIN_LOG_LEVEL']='0'
 
@@ -43,7 +42,7 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
     all_predictor.compile(optimizer=tf.optimizers.Adam())
     net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
     net_s_act = tf.TensorShape((None, None, 1))
-    all_predictor.build([net_s_obs, net_s_act])
+    #all_predictor.build([net_s_obs, net_s_act])
     return all_predictor
 
 
@@ -147,12 +146,17 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
     encoded_obs, encoded_next_obs, rewards, actions = prepare_predictor_data(trajectories, vae, n_traj_steps, n_warmup_steps)
 
     # sanity check
-    for i_t in range(n_warmup_steps - 1):
-        assert np.isclose(encoded_obs[:, i_t + 1], encoded_next_obs[:, i_t], atol=0.001).all(),\
-            f'Trajectory seems to be corrupted'
+    #for i_t in range(n_warmup_steps - 1):
+    #    if not np.isclose(encoded_obs[:, i_t + 1], encoded_next_obs[:, i_t], atol=0.001).all():
+    #        wrong_index = np.argmax(np.abs(np.sum(encoded_next_obs[:, i_t] - encoded_obs[:, i_t + 1], axis=(1, 2))))
+    #        fig, (ax0, ax1) = plt.subplots(1, 2)
+    #        ax0.imshow(trajectories[wrong_index]['s'][i_t + 1])
+    #        ax1.imshow(trajectories[wrong_index]['s_'][i_t])
+    #        plt.show()
+    #        print(f'Trajectory seems to be corrupted {np.sum(encoded_obs[:, i_t + 1] - encoded_next_obs[:, i_t])}')
 
     dataset = (tf.data.Dataset.from_tensor_slices(((encoded_obs, actions), (encoded_next_obs, rewards)))
-               .shuffle(100000)
+               .shuffle(50000)
                .repeat(-1)
                .batch(batch_size, drop_remainder=True)
                .prefetch(-1))
@@ -205,27 +209,31 @@ def load_predictor_weights(complete_predictors_list, env_names, plots=False):
 
 def split_predictor():
     # env #
-    env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
-    #env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
-    obs_resize = (84, 84)
-    collect_samples_per_env = 50000
+    env_names, envs, env_info = gen_environments('new_gridworld')
+    #for env_name, env in zip(env_names, envs):
+    #    print(f'Environment: {env_name}')
+    #    print(f'Observation space: {env.observation_space}')
+    #    print(f'Action space: {env.action_space}')
+
+    # sample memory params #
+    collect_samples_per_env = 80000
 
     # vae params #
     n_vae_steps = 40000
-    n_embeddings = 128
+    n_embeddings = 256
     d_embedding = 32
     frame_stack = 1
 
     # predictor params #
     n_pred_train_steps = 10000
-    n_subtrajectories = 5000
+    n_subtrajectories = 10000
     n_traj_steps = 10
-    n_warmup_steps = 5
-    det_filters = 32
-    prob_filters = 32
-    decider_lw = 128
-    n_models = 8
-    pred_batch_size = 32
+    n_warmup_steps = 7
+    det_filters = 128
+    prob_filters = 128
+    decider_lw = 1
+    n_models = 1
+    pred_batch_size = 64
 
     #tf.config.run_functions_eagerly(True)
 
@@ -236,24 +244,18 @@ def split_predictor():
     vae_weights_path = 'vae_model' + '_and_'.join(env_names) + '_vae_weights'
     predictor_weights_path = 'predictor_model' + '_and_'.join(env_names) + '_predictor_weights'
 
-    envs = [gym.make(env_name) for env_name in env_names]
-    #envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
-    #envs = [gym.wrappers.AtariPreprocessing(gym.make(env_name), grayscale_newaxis=True) for env_name in env_names]
-    obs_shape = envs[0].observation_space.shape
-    n_actions = envs[0].action_space.n
-
-    #memories = gen_data(envs, samples_per_env=collect_samples_per_env, file_paths=sample_mem_paths)
+    #memories = gen_data(envs, env_info, samples_per_env=collect_samples_per_env, file_paths=sample_mem_paths)
     #gen_mixed_memory(memories, [1, 1, 1], file_path=mix_mem_path)
     #del memories
 
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
 
-    gallery = blockworld_position_images(mix_memory)
-
-    vae = vq_vae_net(obs_shape, n_embeddings, d_embedding, train_data_var, frame_stack)
+    vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, frame_stack)
     #vae.summary()
-    all_predictor = predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, pred_batch_size)
+    all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters, decider_lw, n_models, pred_batch_size)
+
+    #all_predictor.summary()
 
     # train vae
     #load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
@@ -262,10 +264,14 @@ def split_predictor():
 
     # extract trajectories and train predictor
     trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, False)
-    #all_predictor.load_weights('predictors/' + predictor_weights_path)
+    all_predictor.load_weights('predictors/' + predictor_weights_path)
     train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
-    all_predictor.load_weights('predictors/' + predictor_weights_path).expect_partial()
-    #all_predictor.summary()
+    all_predictor.load_weights('predictors/' + predictor_weights_path)
+
+    #predictor_allocation_stability(all_predictor, mix_memory, vae, 0)
+    #predictor_allocation_stability(all_predictor, mix_memory, vae, 1)
+    #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
+    #quit()
 
     targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
     rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
@@ -278,6 +284,56 @@ def split_predictor():
     x = range(len(pixel_diff_mean))
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
+    plt.show()
+
+
+def predictor_allocation_stability(predictor, mem, vae, i_env):
+    gallery, n_envs, env_sizes = blockworld_position_images(mem)
+    plot_val = np.full((env_sizes[i_env][1], env_sizes[i_env][3]), -1, dtype=np.float32)
+    plot_val_var = plot_val.copy()
+    action_names_after_rotation = ['right', 'down', 'left', 'up']
+    a = np.full((1, 1, 1), 0)
+    for x in range(env_sizes[i_env][1]):
+        for y in range(env_sizes[i_env][3]):
+            obs = gallery[i_env][x][y]
+            if obs is None:
+                continue
+
+            # do prediction
+            obs = cast_and_normalize_images(obs[np.newaxis, np.newaxis, ...])
+            encoded_obs = vae.encode_to_indices(obs)
+            o_predicted, r_predicted, w_predictors = predictor.predict([encoded_obs, a])
+            most_probable = np.argmax(w_predictors)
+            if np.size(w_predictors) == 1:
+                pred_entropy = 0
+            else:
+                pred_entropy = - sum([np.log(w) * w for w in np.squeeze(w_predictors)])
+
+            # store
+            plot_val[x, y] = most_probable
+            plot_val_var[x, y] = pred_entropy
+
+    fig, (most_probable_pred, uncertainty) = plt.subplots(1, 2)
+    plt.suptitle(f'Environment {i_env}, action {action_names_after_rotation[np.squeeze(a)]}')
+
+    # most probable predictor
+    im_0 = most_probable_pred.matshow(plot_val, cmap=plt.get_cmap('Accent'))
+    most_probable_pred.title.set_text('Chosen predictor')
+    most_probable_pred.get_xaxis().set_visible(False)
+    most_probable_pred.get_yaxis().set_visible(False)
+    divider_0 = make_axes_locatable(most_probable_pred)
+    cax_0 = divider_0.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im_0, cax=cax_0)
+
+    # predictor probability entropy
+    im_1 = uncertainty.matshow(plot_val_var, cmap=plt.get_cmap('inferno'))
+    uncertainty.title.set_text('Entropy predictor probabilities')
+    uncertainty.get_xaxis().set_visible(False)
+    uncertainty.get_yaxis().set_visible(False)
+    divider_1 = make_axes_locatable(uncertainty)
+    cax_1 = divider_1.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im_1, cax=cax_1)
+
     plt.show()
 
 
@@ -311,13 +367,44 @@ def rollout_videos(targets, decoded_rollout_obs, chosen_predictor, video_title, 
     all_titles = []
     for i, (ground_truth, rollout, pred_weight) in enumerate(zip(targets, decoded_rollout_obs, chosen_predictor)):
         weight_imgs = np.stack([np.full_like(ground_truth[0], w) / max_pred_idx * 255 for w in pred_weight])
-        all_videos.extend([ground_truth, rollout, weight_imgs])
+        all_videos.extend([np.clip(ground_truth, 0, 255), np.clip(rollout, 0, 255), np.clip(weight_imgs, 0, 255)])
         all_titles.extend([f'true {i}', f'rollout {i}', f'weight {i}'])
     anim = trajectory_video(all_videos, all_titles, overall_title=video_title, max_cols=3)
 
     if store_animation:
         writer = animation.writers['ffmpeg'](fps=10, bitrate=1800)
         anim.save('rollout.mp4', writer=writer)
+
+
+def gen_environments(test_setting):
+    if test_setting == 'my_gridworld':
+        env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
+        environments = [gym.make(env_name) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'atari':
+        env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
+        # envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
+        environments = [gym.wrappers.AtariPreprocessing(gym.make(env_name), grayscale_newaxis=True) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'new_gridworld':
+        env_names = ['MiniGrid-Empty-Random-5x5-v0', 'MiniGrid-LavaCrossingS9N2-v0', 'MiniGrid-ObstructedMaze-1Dl-v0']
+        environments = [gym.wrappers.TransformObservation(gym_minigrid.wrappers.RGBImgPartialObsWrapper(gym.make(env_name)),
+                                                          lambda obs: obs['image']) for env_name in env_names]
+        obs_shape = environments[0].observation_space['image'].shape
+        obs_dtype = environments[0].observation_space['image'].dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    else:
+        raise ValueError(f'Unknown test setting: {test_setting}')
+
+    env_info = {'obs_shape': obs_shape, 'obs_dtype': obs_dtype, 'n_actions': n_actions, 'act_dtype': act_dtype}
+    return env_names, environments, env_info
 
 
 if __name__ == '__main__':

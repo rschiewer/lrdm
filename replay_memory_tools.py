@@ -82,16 +82,16 @@ def blockworld_position_images(mem):
         min_y = min((int(pos[1]) for pos in env_samples['pos']))
         max_x = max((int(pos[0]) for pos in env_samples['pos']))
         max_y = max((int(pos[1]) for pos in env_samples['pos']))
-        env_sizes.append((min_x, max_x, min_y, max_y))
+        env_sizes.append((min_x, max_x + 1, min_y, max_y + 1))
         assert min_x == 0
         assert min_y == 0
 
     # prepare grid to hold observations for every position
     gallery_size = 0
     for size, cur_env_gallery in zip(env_sizes, gallery):
-        for x_coord in range(size[1] + 1):
+        for x_coord in range(size[1]):
             cur_env_gallery.append([])
-            for y_coord in range(size[3] + 1):
+            for y_coord in range(size[3]):
                 cur_env_gallery[x_coord].append(None)
                 gallery_size += 1
 
@@ -124,7 +124,13 @@ def _run_env(env, n_samples, idx):
             action = env.action_space.sample()
             observation, reward, done, info = env.step(action)
 
-            player_pos = info.pop('player_pos', [-42, -42])
+            if 'player_pos' in info.keys():
+                player_pos = info.pop('player_pos', None)
+            elif env.agent_pos is not None:
+                player_pos = env.agent_pos
+            else:
+                player_pos = [-42, -42]
+
             memory.append((last_observation, action, reward, observation, done, player_pos, idx))
 
             if done:
@@ -143,11 +149,9 @@ def _run_env(env, n_samples, idx):
     return memory
 
 
-def gen_data(envs, samples_per_env, file_paths=None):
-    obs_shape = envs[0].observation_space.shape
-    obs_dtype = envs[0].observation_space.dtype
-    acts_shape = envs[0].action_space.shape
-    acts_dtype = envs[0].action_space.dtype
+def gen_data(envs, env_info, samples_per_env, file_paths=None):
+    obs_shape = env_info['obs_shape']
+    obs_dtype = env_info['obs_dtype']
     assert type(envs[0].action_space) is gym.spaces.Discrete
 
     memories = []
@@ -158,7 +162,7 @@ def gen_data(envs, samples_per_env, file_paths=None):
 
     # Make numpy arrays out of data
     arr_dtype = np.dtype([('s', obs_dtype, obs_shape),
-                          ('a', acts_dtype, acts_shape),
+                          ('a', np.int32, ()),
                           ('r', np.float32, ()),
                           ('s_', obs_dtype, obs_shape),
                           ('done', np.int8, ()),
@@ -299,6 +303,8 @@ def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=
         title = plt.text(0.1, 0.1, i, ha="center", va="center", transform=fig.transFigure, fontsize="large")
         tmp_artists = [title]
         for traj, ax in zip(obs, axes.flatten()):
+            ax.set_xticks([])
+            ax.set_yticks([])
             tmp_artists.append(ax.imshow(traj[i], animated=True))
         to_plot.append(tmp_artists)
 

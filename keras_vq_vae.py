@@ -271,7 +271,8 @@ class QuantizationLayerEMA(tfkl.Layer):
         soft_embeddings_flat = tf.matmul(encoding_indices_flat, w)
         soft_embeddings = tf.reshape(soft_embeddings_flat, s_soft_embeddings)
 
-        return hard_embeddings - soft_embeddings + tf.stop_gradient(soft_embeddings)
+        #return hard_embeddings - soft_embeddings + tf.stop_gradient(soft_embeddings)
+        return soft_embeddings
 
 
 class ResidualStackLayer(tfkl.Layer):
@@ -421,7 +422,7 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         self._vqvae = QuantizationLayerEMA(embedding_dim=embedding_dim, num_embeddings=num_embeddings,
                                            commitment_cost=commitment_cost, decay=decay)
         self._pre_vq_conv1 = tfkl.Conv2D(embedding_dim, kernel_size=(1, 1), strides=(1, 1), name='to_vq')
-        self._data_variance = train_data_variance
+        self._data_variance = tf.Variable(train_data_variance, trainable=False, dtype=tf.float32)
 
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
@@ -429,6 +430,14 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         self._grayscale_input = grayscale_input
         self._total_loss = tf.keras.metrics.Mean('total_loss')
         self._reconstruction_loss = tf.keras.metrics.Mean('reconstruction_loss')
+
+    @property
+    def data_variance(self):
+        return self._data_variance.value()
+
+    @data_variance.setter
+    def data_variance(self, val):
+        self._data_variance.assign(val)
 
     def _decode(self, vq_output):
         x_recon = self._decoder(vq_output)

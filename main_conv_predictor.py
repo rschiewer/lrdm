@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from blockworld import *
 import gym_minigrid
+import tensorflow_probability as tfp
 
 #os.environ['TF_CPP_MIN_LOG_LEVEL']='0'
 
@@ -206,10 +207,63 @@ def load_predictor_weights(complete_predictors_list, env_names, plots=False):
         plt.legend()
         plt.show()
 
+#@tf.function
+def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
+    """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf."""
+
+    # add axis for batch dim when encoding
+    encoded_start_sample = vae.encode_to_indices(start_sample[tf.newaxis, ...])
+    # add axis for time, then repeat n_rollouts times along batch dimension
+    o_in = tf.repeat(encoded_start_sample[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
+    dist_params = tf.random.uniform((plan_steps, n_actions), dtype=tf.float32)
+    k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
+
+    for i_iter in range(n_iterations):
+        # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
+        # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
+        a_in = tfp.distributions.Categorical(logits=dist_params).sample(n_rollouts)
+        a_in = tf.expand_dims(a_in, axis=-1)
+
+        o_pred, r_pred, pred_weights = predictor([o_in, a_in])
+        returns = tf.squeeze(tf.reduce_sum(r_pred, axis=1))
+        top_returns, top_i_a = tf.math.top_k(returns, k=k)
+        top_a = tf.gather(a_in, top_i_a)
+
+        print(f'Top returns are: {top_returns}')
+
+        # MLE for categorical, see
+        # https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
+        # here we have multiple samples for MLE, which means the parameter update for one timestep is:
+        # theta_i = sum_k a_ki / (sum_i sum_k a_ki) with i=action_index, k=sample
+        dist_params = tf.reduce_sum(top_a, axis=1) / tf.reduce_sum(top_a, axis=[0, 1])
+
+    return tfp.distributions.Categorical(logits=dist_params).sample()
+
+
+def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=10, top_perc=0.1, render=False):
+    last_observation = env.reset()
+    t = 0
+    while True:
+        if render:
+            env.render()
+
+        obs_preprocessed = cast_and_normalize_images(last_observation)
+        actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts, n_iterations,
+                      top_perc)
+        action = actions[0].numpy()
+        observation, reward, done, info = env.step(action)
+
+        if done:
+            break
+        else:
+            last_observation = observation
+        t += 1
+    env.close()
+
 
 def split_predictor():
     # env #
-    env_names, envs, env_info = gen_environments('new_gridworld')
+    env_names, envs, env_info = gen_environments('my_gridworld')
     #for env_name, env in zip(env_names, envs):
     #    print(f'Environment: {env_name}')
     #    print(f'Observation space: {env.observation_space}')
@@ -220,22 +274,23 @@ def split_predictor():
 
     # vae params #
     n_vae_steps = 40000
-    n_embeddings = 256
+    n_embeddings = 128
     d_embedding = 32
     frame_stack = 1
 
     # predictor params #
-    n_pred_train_steps = 10000
+    n_pred_train_steps = 500#10000
     n_subtrajectories = 10000
-    n_traj_steps = 10
-    n_warmup_steps = 7
-    det_filters = 128
+    n_traj_steps = 15
+    n_warmup_steps = 5
+    pad_trajectories = True
+    det_filters = 64
     prob_filters = 128
     decider_lw = 1
     n_models = 1
-    pred_batch_size = 32
+    pred_batch_size = 64
 
-    tf.config.run_functions_eagerly(True)
+    #tf.config.run_functions_eagerly(True)
 
     # start training procedure #
 
@@ -263,9 +318,9 @@ def split_predictor():
     load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
 
     # extract trajectories and train predictor
-    trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, False)
-    all_predictor.load_weights('predictors/' + predictor_weights_path)
-    train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
+    trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, pad_short_trajectories=pad_trajectories)
+    #all_predictor.load_weights('predictors/' + predictor_weights_path)
+    #train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
     all_predictor.load_weights('predictors/' + predictor_weights_path)
 
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 0)
@@ -273,14 +328,16 @@ def split_predictor():
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
     #quit()
 
-    targets, rollouts, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
-    rollout_videos(targets, rollouts, w_predictors, 'Predictor Test')
+    #control(all_predictor, vae, envs[0], env_info, render=True, plan_steps=100)
+
+    targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
+    rollout_videos(targets, o_rollout, r_rollout, w_predictors, 'Predictor Test')
 
     plt.hist(np.array(w_predictors).flatten())
     plt.show()
 
-    pixel_diff_mean = np.mean(targets - rollouts, axis=(0, 2, 3, 4))
-    pixel_diff_var = np.std(targets - rollouts, axis=(0, 2, 3, 4))
+    pixel_diff_mean = np.mean(targets - o_rollout, axis=(0, 2, 3, 4))
+    pixel_diff_var = np.std(targets - o_rollout, axis=(0, 2, 3, 4))
     x = range(len(pixel_diff_mean))
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
@@ -341,7 +398,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     if not predictor.open_loop_rollout_training:
         n_warmup_steps = n_steps
 
-    trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, False)
+    trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, warn=False, pad_short_trajectories=True)
     encoded_obs, _, _, actions = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']
@@ -357,19 +414,25 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     o_rollout, r_rollout, w_predictors = predictor([encoded_start_obs, actions])
     chosen_predictor = np.argmax(tf.transpose(w_predictors, [1, 2, 0]), axis=-1)
     decoded_rollout_obs = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
+    rewards = r_rollout.numpy()
 
-    return targets, decoded_rollout_obs, chosen_predictor
+    return targets, decoded_rollout_obs, rewards, chosen_predictor
 
 
-def rollout_videos(targets, decoded_rollout_obs, chosen_predictor, video_title, store_animation=False):
+def rollout_videos(targets, o_rollouts, r_rollouts, chosen_predictor, video_title, store_animation=False):
     max_pred_idx = chosen_predictor.max() + 1e-5
+    max_reward = r_rollouts.max()
     all_videos = []
     all_titles = []
-    for i, (ground_truth, rollout, pred_weight) in enumerate(zip(targets, decoded_rollout_obs, chosen_predictor)):
+    for i, (ground_truth, o_rollout, r_rollout, pred_weight) in enumerate(zip(targets, o_rollouts, r_rollouts, chosen_predictor)):
         weight_imgs = np.stack([np.full_like(ground_truth[0], w) / max_pred_idx * 255 for w in pred_weight])
-        all_videos.extend([np.clip(ground_truth, 0, 255), np.clip(rollout, 0, 255), np.clip(weight_imgs, 0, 255)])
-        all_titles.extend([f'true {i}', f'rollout {i}', f'weight {i}'])
-    anim = trajectory_video(all_videos, all_titles, overall_title=video_title, max_cols=3)
+        reward_imgs = np.stack([np.full_like(ground_truth[0], r) / max_reward * 255 for r in r_rollout])
+        all_videos.extend([np.clip(ground_truth, 0, 255),
+                           np.clip(o_rollout, 0, 255),
+                           np.clip(reward_imgs, 0, 255),
+                           np.clip(weight_imgs, 0, 255)])
+        all_titles.extend([f'true {i}', f'o_rollout {i}', f'r_rollout {i}', f'weight {i}'])
+    anim = trajectory_video(all_videos, all_titles, overall_title=video_title, max_cols=4)
 
     if store_animation:
         writer = animation.writers['ffmpeg'](fps=10, bitrate=1800)

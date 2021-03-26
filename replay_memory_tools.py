@@ -1,12 +1,13 @@
 import warnings
-
 import os
 import gym
-import numpy
 import pickle
 import numpy as np
 from matplotlib import pyplot as plt, animation
 import tensorflow as tf
+import random
+
+
 
 
 def detect_trajectories(mem):
@@ -40,7 +41,7 @@ def extract_sub_memory(mem, desired_length):
     return mem[0:breakpoint]
 
 
-def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, random=True):
+def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, random=True, pad_short_trajectories=False):
     traj_info = detect_trajectories(mem)
     candidates = np.nonzero(traj_info[:, 2] >= traj_length)[0]
 
@@ -55,13 +56,23 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
                 traj_length))
 
     cand_iter = iter(candidates)
-    subtrajectories = np.empty(shape=(num_trajectories, traj_length), dtype=mem.dtype)
-    for i in range(num_trajectories):
-        traj_idx = np.random.choice(candidates) if random else next(cand_iter)
-        ts, te, tl = traj_info[traj_idx]
+    subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
+    for i_collected in range(num_trajectories):
+        i_traj = np.random.choice(candidates) if random else next(cand_iter)
+        i_ts, i_te, n_tl = traj_info[i_traj]
         # traj_length + 1 in order to not miss last transition
-        start_idx = np.random.randint(ts, te - traj_length + 1) if random else 0
-        subtrajectories[i] = mem[start_idx: start_idx + traj_length]
+        if random:
+            if pad_short_trajectories:
+                i_start = np.random.randint(i_ts, i_te)
+                i_end = min(i_te, i_start + traj_length)
+            else:
+                i_start = np.random.randint(i_ts, i_te - traj_length + 1)
+                i_end = i_start + traj_length
+        else:
+            i_start = 0
+            i_end = traj_length
+
+        subtrajectories[i_collected, :i_end - i_start] = mem[i_start: i_end]
 
     for st in subtrajectories:
         assert np.sum(st['done']) <= 1
@@ -337,16 +348,3 @@ def load_env_samples(file_names):
         memories = memories[0]
 
     return memories
-
-
-def _load_env_samples(file_names):
-    memories = []
-    # TODO: rewrite
-    for file_name in file_names:
-        with open(f'env_samples/{file_name}_format', 'wb+') as handle:
-            arr_dtype = pickle.load(handle)
-
-            columns = []
-            for name in arr_dtype.names:
-                with open(f'env_samples/{file_name}_{i_mem}_{name}', 'wb+') as f:
-                    np.save(f, mem[name])

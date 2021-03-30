@@ -20,7 +20,6 @@ class RecurrentPredictor(keras.Model):
             self.summary_writer = None
             self.summary_writer = tf.summary.create_file_writer(f'./tensorboard_debug_logs')
 
-        kwargs.pop('debug_log', None)
         super(RecurrentPredictor, self).__init__(**kwargs)
 
         self.s_obs = tuple(observation_shape)
@@ -79,6 +78,7 @@ class RecurrentPredictor(keras.Model):
         in_h = layers.Input((None, *h_out_shape), name='p_r_in')
         x_params_r = layers.TimeDistributed(layers.Flatten())(in_h)
         x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
+        #x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
         #x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(2, activation=None, name='p_r_out'))(x_params_r)
 
@@ -185,7 +185,6 @@ class RecurrentPredictor(keras.Model):
             h, _, _ = det_model([o_in, a_in] + dummy_states_h_0 + dummy_states_h_1, training=training)
             params_o = params_o_model(h, training=training)
             params_r = params_r_model(h, training=training)
-
 
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
@@ -294,7 +293,11 @@ class RecurrentPredictor(keras.Model):
         o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
         #indices = tf.argmax(o_pred, axis=-1)
         #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
-        r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
+
+        if training:
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
+        else:
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).mode()
 
         return o_pred, r_pred, states_h_0, states_h_1
 

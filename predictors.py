@@ -76,8 +76,11 @@ class RecurrentPredictor(keras.Model):
     def _gen_params_r(self, h_out_shape, prob_filters):
         # stochastic model to implement p(r_t+1 | o_t, a_t, h_t)
         in_h = layers.Input((None, *h_out_shape), name='p_r_in')
-        x_params_r = layers.TimeDistributed(layers.Flatten())(in_h)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2,2), kernel_size=4, padding='SAME', activation='relu'))(in_h)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(2,2), kernel_size=3, padding='SAME', activation='relu'))(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Flatten())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
+        #x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
         #x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation='relu'))(x_params_r)
         #x_params_r = layers.TimeDistributed(layers.LayerNormalization())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(2, activation=None, name='p_r_out'))(x_params_r)

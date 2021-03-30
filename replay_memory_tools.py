@@ -307,7 +307,7 @@ def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=
                              f'trajectory, but trajectory {i} has shape {np.shape(o)} instead')
 
     n_rows = np.ceil(len(obs) / max_cols).astype(np.int)
-    fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(n_cols * 2.5 + 1, n_rows * 2.5 + 1))
+    fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(n_cols * 2.1 + 1, n_rows * 2.1 + 1))
     if overall_title:
         fig.suptitle(overall_title)
     to_plot = []
@@ -327,7 +327,6 @@ def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=
         to_plot.append(tmp_artists)
 
     anim = animation.ArtistAnimation(fig, to_plot, interval=50, blit=True, repeat_delay=1000)
-    plt.tight_layout()
     plt.show()
 
     return anim

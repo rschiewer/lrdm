@@ -8,9 +8,9 @@ import tensorflow as tf
 import random
 
 
-
-
 def detect_trajectories(mem):
+    # todo: this is broken, fix it!
+    # todo: last state seems to be missing
     end_states = np.nonzero(mem['done'])[0]
     # start states are the next state after every terminal state
     start_states = end_states + 1
@@ -43,7 +43,11 @@ def extract_sub_memory(mem, desired_length):
 
 def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, random=True, pad_short_trajectories=False):
     traj_info = detect_trajectories(mem)
-    candidates = np.nonzero(traj_info[:, 2] >= traj_length)[0]
+
+    if pad_short_trajectories:
+        candidates = list(range(len(traj_info)))
+    else:
+        candidates = np.nonzero(traj_info[:, 2] >= traj_length)[0]
 
     # print('Found {} candidate trajectories out of {} total'.format(len(candidates), len(traj_info)))
 
@@ -63,21 +67,21 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
         # traj_length + 1 in order to not miss last transition
         if random:
             if pad_short_trajectories:
-                i_start = np.random.randint(i_ts, i_te)
-                i_end = min(i_te, i_start + traj_length)
+                i_sub_start = np.random.randint(i_ts, i_te)
+                i_sub_end = min(i_te + 1, i_sub_start + traj_length)
             else:
-                i_start = np.random.randint(i_ts, i_te - traj_length + 1)
-                i_end = i_start + traj_length
+                i_sub_start = np.random.randint(i_ts, i_te - traj_length + 1)
+                i_sub_end = i_sub_start + traj_length
         else:
-            i_start = 0
-            i_end = traj_length
+            i_sub_start = 0
+            i_sub_end = traj_length
 
-        subtrajectories[i_collected, :i_end - i_start] = mem[i_start: i_end]
+        subtrajectories[i_collected, :i_sub_end - i_sub_start] = mem[i_sub_start: i_sub_end]
+
 
     for st in subtrajectories:
         assert np.sum(st['done']) <= 1
 
-    #return np.array(subtrajectories)
     return subtrajectories
 
 
@@ -303,11 +307,6 @@ def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=
     if n_cols == 1:
         axes = np.array(axes)
 
-    #if n_cols == 1:
-    #    axes.set_title(titles)
-    #    for i in range(min(traj_len, max_len)):
-    #        to_plot.append([axes.imshow(obs[i], animated=True)])
-    #else:
     for ax, title in zip(axes.flatten(), titles):
         ax.set_title(title)
     for i in range(min(traj_len, max_len)):

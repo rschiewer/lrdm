@@ -85,6 +85,14 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
     return subtrajectories
 
 
+def cumulative_episode_rewards(mem):
+    traj_info = detect_trajectories(mem)
+    rewards = []
+    for es, ee, el in traj_info:
+        rewards.append(mem[es:ee+1]['r'].sum())
+    return rewards
+
+
 def blockworld_position_images(mem):
     n_envs = mem['env'].max() + 1
     gallery = [[] for _ in range(n_envs)]

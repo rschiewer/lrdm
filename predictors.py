@@ -1,6 +1,7 @@
 from tensorflow_probability import distributions as tfd
 from tf_tools import *
 from keras_vq_vae import VectorQuantizerEMAKeras
+import datetime
 
 
 class RecurrentPredictor(keras.Model):
@@ -11,12 +12,15 @@ class RecurrentPredictor(keras.Model):
         assert len(observation_shape) == 2, f'Expecting (w, h) shaped cb vector index matrices, got {len(observation_shape)}D'
 
         if kwargs.pop('debug_log', False):
-            import datetime
             current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            self.summary_writer = tf.summary.create_file_writer(f'./logs/{current_time}')
+            self._tensorboard_log = True
+            self.summary_writer = tf.summary.create_file_writer(f'./tensorboard_debug_logs/{current_time}')
         else:
+            self._tensorboard_log = False
             self.summary_writer = None
+            self.summary_writer = tf.summary.create_file_writer(f'./tensorboard_debug_logs')
 
+        kwargs.pop('debug_log', None)
         super(RecurrentPredictor, self).__init__(**kwargs)
 
         self.s_obs = tuple(observation_shape)
@@ -34,19 +38,19 @@ class RecurrentPredictor(keras.Model):
 
         self.mdl_stack = []
         for i_mdl in range(n_models):
-            det_model = self._det_state(det_filters, prob_filters, n_actions, observation_shape, vqvae, batch_size)
+            det_model = self._det_state(det_filters, prob_filters, n_actions, observation_shape, vqvae)
             params_o_model = self._gen_params_o(self._h_out_shape, prob_filters, vqvae)
             params_r_model = self._gen_params_r(self._h_out_shape, prob_filters)
             self.mdl_stack.append((det_model, params_o_model, params_r_model))
 
-        self.params_decider = self._gen_params_decider(self.s_obs, n_models, decider_lw, vqvae, batch_size)
+        self.params_decider = self._gen_params_decider(self.s_obs, n_models, decider_lw, vqvae)
 
         self._obs_accuracy = tf.keras.metrics.CategoricalCrossentropy(name='crossentropy_error')
         self._rew_accuracy = tf.keras.metrics.MeanSquaredError(name='mse')
         self._loss_tracker = tf.keras.metrics.Mean(name='loss')
         self._predictor_weights_tracker = [tf.keras.metrics.Mean(name=f'predictor_{i}_weight') for i in range(n_models)]
 
-    def _gen_params_decider(self, s_obs, n_mdl, decider_lw, vqvae, batch_size):
+    def _gen_params_decider(self, s_obs, n_mdl, decider_lw, vqvae):
         def obs_flatten(inp):
             n_batch = tf.shape(inp)[0]
             n_time = tf.shape(inp)[1]
@@ -98,7 +102,7 @@ class RecurrentPredictor(keras.Model):
 
         return keras.Model(inputs=in_h, outputs=x_params_o, name='p_o_model')
 
-    def _det_state(self, det_filters, prob_filters, n_actions, s_obs, vqvae, batch_size):
+    def _det_state(self, det_filters, prob_filters, n_actions, s_obs, vqvae):
         # deterministic model to form state belief h_t = f(o_t-1, a_t-1, c_t-1)
         # note: h_t-1 is injected into the model not as explicit input but through previous LSTM states
         index_transform_fn = self._index_transform_fn(vqvae)
@@ -124,11 +128,11 @@ class RecurrentPredictor(keras.Model):
     def _index_transform_fn(self, vqvae):
         if self.straight_through_gradient:
             def transform_fun(lazy_one_hot_indices):
-               index_matrices = vqvae.indices_to_embeddings_straight_through(lazy_one_hot_indices)
-               return index_matrices
+                index_matrices = vqvae.indices_to_embeddings_straight_through(lazy_one_hot_indices)
+                return index_matrices
         else:
-            def transform_fun(input):
-                indices = tf.argmax(input, -1)
+            def transform_fun(inp):
+                indices = tf.argmax(inp, -1)
                 index_matrices = vqvae.indices_to_embeddings(indices)
                 return index_matrices
 
@@ -273,6 +277,12 @@ class RecurrentPredictor(keras.Model):
         r_predictions = tf.transpose(r_predictions, [1, 2, 0, 3])
         w_predictors = tf.transpose(w_predictors, [2, 1, 0])
 
+        with tf.summary.record_if(self._tensorboard_log):
+            with self.summary_writer.as_default():
+                for i_pred in range(self.n_models):
+                    h_pred_cur = tf.gather(states_h_0, i_pred)
+                    tf.summary.histogram(f'final step lstm states cell 0 pred_{i_pred}', tf.reshape(h_pred_cur, (-1,)), step=self._train_step)
+
         return o_predictions, r_predictions, w_predictors
 
     @tf.function
@@ -330,7 +340,7 @@ class RecurrentPredictor(keras.Model):
         self._vqvae.trainable = vqvae_is_trainable
         return n_weights
 
-    #@tf.function
+    @tf.function
     def train_step(self, data):
         tf.assert_equal(len(data), 2), f'Need tuple (x, y) for training, got {len(data)}'
 
@@ -344,30 +354,48 @@ class RecurrentPredictor(keras.Model):
             o_groundtruth = tf.one_hot(tf.cast(y[0], tf.int32), self._vae_n_embeddings, dtype=tf.float32)
             r_groundtruth = y[1]
 
-            if self.summary_writer:
+            o_predictions, r_predictions, w_predictors = self(x, training=True)
+            with tf.summary.record_if(self._tensorboard_log):
                 with self.summary_writer.as_default():
-                    tf.summary.trace_on(graph=True, profiler=True)
-                    o_predictions, r_predictions, w_predictors = self(x, training=True)
-                    tf.summary.trace_export(name='Convolutional_Predictor_Trace', step=self._train_step.value(), profiler_outdir='graph')
-                log_groundtruth = self._vqvae.decode_from_indices(tf.expand_dims(tf.argmax(o_groundtruth[0, 0], axis=-1), axis=0))
-                log_predicted = self._vqvae.decode_from_indices(tf.expand_dims(tf.argmax(o_predictions[0, 0], axis=-1), axis=0))
-                tf.summary.image('Ground Truth', log_groundtruth, step=self._train_step)
-                tf.summary.image('Predicted', log_predicted, step=self._train_step)
-            else:
-                o_predictions, r_predictions, w_predictors = self(x, training=True)
+                    #tf.summary.trace_on(graph=True, profiler=True)
+                    #o_predictions, r_predictions, w_predictors = self(x, training=True)
+                    #tf.summary.trace_export(name='Convolutional_Predictor_Trace', step=self._train_step.value(), profiler_outdir='graph')
+                    log_groundtruth = self._vqvae.decode_from_indices(tf.expand_dims(tf.argmax(o_groundtruth[0, -1], axis=-1), axis=0))
+                    tf.summary.image('obs ground truth', log_groundtruth, step=self._train_step)
+                    tf.summary.scalar('reward sum ground truth', tf.reduce_sum(r_groundtruth), step=self._train_step)
+
+                    if tf.reduce_sum(r_groundtruth[0, ...]) > 0:
+                        reward_transition = tf.argmax(r_groundtruth[0, ...])
+                        rew_idx_pre = tf.argmax(tf.gather(o_groundtruth[0], reward_transition - 1), axis=-1)
+                        rew_idx_post = tf.argmax(tf.gather(o_groundtruth[0], reward_transition), axis=-1)
+                        rew_o_pre = self._vqvae.decode_from_indices(rew_idx_pre)
+                        rew_o_post = self._vqvae.decode_from_indices(rew_idx_post)
+                        separator = tf.ones_like(rew_o_pre)[:, :, 0:1, :]
+                        tf.summary.image(f'rewarding_transition', tf.concat([rew_o_pre, separator, rew_o_post], axis=-2), step=self._train_step)
+
+                    for i_pred in range(self.n_models):
+                        o_current_timeline = tf.gather(o_predictions, i_pred)
+                        r_current_timeline = tf.gather(r_predictions, i_pred)
+                        log_predicted = self._vqvae.decode_from_indices(tf.expand_dims(tf.argmax(o_current_timeline[0, -1], axis=-1), axis=0))
+                        tf.summary.image(f'o_predicted_{i_pred}', log_predicted, step=self._train_step)
+                        tf.summary.scalar(f'r_predicted_{i_pred}', tf.reduce_sum(r_current_timeline), step=self._train_step)
 
             total_loss = 0.0
+            total_obs_err = 0.0
+            total_r_err = 0.0
             # this might be wrong, in every timestep only the chosen predictor should be updated
             # but currently, there are all predictors updated weighted with the probability that they are chosen
             for i in range(self.n_models):
                 o_pred = o_predictions[i]
                 r_pred = r_predictions[i]
                 w_predictor = w_predictors[i]
-                curr_mdl_obs_err = tf.reduce_sum(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
-                curr_mdl_r_err = tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
-                total_loss += tf.reduce_mean(curr_mdl_obs_err) + tf.reduce_mean(curr_mdl_r_err)
+                curr_mdl_obs_err = tf.reduce_mean(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
+                curr_mdl_r_err =  tf.losses.mean_squared_error(r_groundtruth, r_pred) * w_predictor
+                total_loss += curr_mdl_obs_err + curr_mdl_r_err
                 total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
                 total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                total_obs_err += tf.reduce_mean(curr_mdl_obs_err)
+                total_r_err += curr_mdl_r_err
             #total_loss += #TODO: predictor entropy bonus here
 
         # Compute gradients
@@ -387,9 +415,9 @@ class RecurrentPredictor(keras.Model):
         self._train_step.assign(self._train_step.value() + 1)
 
         weight_stats = {f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(self.n_models)}
-        stats = {'loss': self._loss_tracker.result(),
-                 'mp_o_err': self._obs_accuracy.result(),
-                 'mp_r_err': self._rew_accuracy.result(),
+        stats = {'loss': total_loss, #self._loss_tracker.result(),
+                 'mp_o_err': total_obs_err, #self._obs_accuracy.result(),
+                 'mp_r_err': total_r_err, #self._rew_accuracy.result(),
                  't': self._temp(True)}
         stats.update(weight_stats)
         return stats

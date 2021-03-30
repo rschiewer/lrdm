@@ -9,7 +9,7 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow_probability import distributions as tfd
 
-from tf_tools import InflateLayer, InflateActionLayer, StatefulConvLSTM2DCell
+from tf_tools import InflateLayer, InflateActionLayer, StatefulConvLSTM2D
 
 
 class OldPredictor(keras.Model):
@@ -2595,7 +2595,7 @@ class AutoregressiveMultiHeadFullyConvolutionalPredictor(keras.Model):
         self.concat = layers.Concatenate(axis=-1)
 
         # recurrent layer(s)
-        self.common_rec_layers = [StatefulConvLSTM2DCell(common_filters, kernel_size=3)]
+        self.common_rec_layers = [StatefulConvLSTM2D(common_filters, kernel_size=3)]
         self.rec_layers.extend(self.common_rec_layers)
 
         # intermediate layer(s)
@@ -2603,7 +2603,7 @@ class AutoregressiveMultiHeadFullyConvolutionalPredictor(keras.Model):
 
         self.heads = []
         for _ in range(n_heads):
-            post_rec_layers = [StatefulConvLSTM2DCell(per_head_filters, kernel_size=3)]
+            post_rec_layers = [StatefulConvLSTM2D(per_head_filters, kernel_size=3)]
             self.rec_layers.extend(post_rec_layers)
             # x, y of conv layers never changed during whole network, so we only need to make number of channels fit
             out_state = layers.Conv2D(state_shape[-1], kernel_size=3, padding='SAME', activation=None)
@@ -2832,7 +2832,7 @@ class AutoregressiveFullyConvolutionalPredictor(keras.Model):
         self.concat = layers.Concatenate(axis=-1)
 
         # recurrent layer(s)
-        self.common_rec_layers = [StatefulConvLSTM2DCell(common_filters, kernel_size=3)]
+        self.common_rec_layers = [StatefulConvLSTM2D(common_filters, kernel_size=3)]
         self.rec_layers.extend(self.common_rec_layers)
 
         # intermediate layer(s)
@@ -2840,7 +2840,7 @@ class AutoregressiveFullyConvolutionalPredictor(keras.Model):
 
         self.heads = []
         for _ in range(n_heads):
-            post_rec_layers = [StatefulConvLSTM2DCell(per_head_filters, kernel_size=3)]
+            post_rec_layers = [StatefulConvLSTM2D(per_head_filters, kernel_size=3)]
             self.rec_layers.extend(post_rec_layers)
             # x, y of conv layers never changed during whole network, so we only need to make number of channels fit
             out_state = layers.Conv2D(state_shape[-1], kernel_size=3, padding='SAME', activation=None)
@@ -3056,8 +3056,8 @@ class _AutoregressiveProbabilisticFullyConvolutionalPredictor(keras.Model):
         o_cb_vectors = vqvae_i_to_vec(in_o)
         a_inflated = InflateActionLayer(observation_shape, n_actions)(in_a)
         h = layers.Concatenate(axis=-1)([o_cb_vectors, a_inflated])  # note: use cb vector indices and cb vectors
-        h_rec_1 = StatefulConvLSTM2DCell(common_filters, kernel_size=3)(h)
-        h_rec_2 = StatefulConvLSTM2DCell(common_filters, kernel_size=3)(h_rec_1)
+        h_rec_1 = StatefulConvLSTM2D(common_filters, kernel_size=3)(h)
+        h_rec_2 = StatefulConvLSTM2D(common_filters, kernel_size=3)(h_rec_1)
         #h_rec_1 = layers.ConvLSTM2D(common_filters, kernel_size=3, return_sequences=True)(h)
         #h_rec_2 = layers.ConvLSTM2D(common_filters, kernel_size=3, return_sequences=True)(h_rec_1)
         self.det_model = keras.Model(inputs=[in_o, in_a], outputs=h_rec_2)

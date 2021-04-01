@@ -45,7 +45,7 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
     traj_info = detect_trajectories(mem)
 
     if pad_short_trajectories:
-        candidates = list(range(len(traj_info)))
+        candidates = np.nonzero(traj_info[:, 2] > 1)[0]
     else:
         candidates = np.nonzero(traj_info[:, 2] >= traj_length)[0]
 

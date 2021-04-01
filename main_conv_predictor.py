@@ -21,17 +21,17 @@ if gpus:
         print(e)
 
 
-def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, frame_stack=1):
+def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment_cost, frame_stack=1):
     assert frame_stack == 1, 'No frame stacking supported currently'
     grayscale_input = obs_shape[-1] == 1
-    vae = VectorQuantizerEMAKeras(train_data_var, num_embeddings=n_embeddings, embedding_dim=d_embeddings,
-                                  grayscale_input=grayscale_input)
+    vae = VectorQuantizerEMAKeras(train_data_var, commitment_cost=commitment_cost, num_embeddings=n_embeddings,
+                                  embedding_dim=d_embeddings, grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
     vae.build((None, *obs_shape))
     return vae
 
 
-def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models):
+def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
     all_predictor = RecurrentPredictor(vae_index_matrix_shape, n_actions,
                                        vae,
@@ -39,7 +39,7 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        det_filters=det_filters,
                                        prob_filters=prob_filters,
                                        decider_lw=decider_lw,
-                                       n_models=n_models)  # , debug_log=True)
+                                       n_models=n_models, debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
     net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
     net_s_act = tf.TensorShape((None, None, 1))
@@ -155,6 +155,13 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
     #        ax1.imshow(trajectories[wrong_index]['s_'][i_t])
     #        plt.show()
     #        print(f'Trajectory seems to be corrupted {np.sum(encoded_obs[:, i_t + 1] - encoded_next_obs[:, i_t])}')
+    #for i_traj, (traj, r) in enumerate(zip(trajectories, rewards)):
+    #    if True in traj['done']:
+    #        terminals = np.nonzero(traj['done'])
+    #        assert len(terminals) == 1
+    #        if r[terminals[0]] == 1:
+    #            plt.imshow(trajectories[i_traj][terminals[0]]['s'][0])
+    #            plt.show()
 
     dataset = (tf.data.Dataset.from_tensor_slices(((encoded_obs, actions), (encoded_next_obs, rewards)))
                .shuffle(50000)
@@ -209,8 +216,10 @@ def load_predictor_weights(complete_predictors_list, env_names, plots=False):
 
 #@tf.function
 def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
-    """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf."""
-
+    """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
+    https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
+    and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
+    """
     # add axis for batch dim when encoding
     encoded_start_sample = vae.encode_to_indices(start_sample[tf.newaxis, ...])
     # add axis for time, then repeat n_rollouts times along batch dimension
@@ -218,26 +227,43 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     dist_params = tf.random.uniform((plan_steps, n_actions), dtype=tf.float32)
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
 
+    act_vec = np.array([0, 0, 1, 1, 1, 1, 1, 1, 2, 2])
+    o_pred, r_pred, pred_weights = predictor([encoded_start_sample[tf.newaxis, ...], act_vec[tf.newaxis, ..., tf.newaxis]])
+    #print(r_pred.numpy())
+    #quit()
+
     for i_iter in range(n_iterations):
         # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
         # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
-        a_in = tfp.distributions.Categorical(logits=dist_params).sample(n_rollouts)
+        a_in = tfp.distributions.Categorical(probs=dist_params).sample(n_rollouts)
         a_in = tf.expand_dims(a_in, axis=-1)
 
         o_pred, r_pred, pred_weights = predictor([o_in, a_in])
         returns = tf.squeeze(tf.reduce_sum(r_pred, axis=1))
-        top_returns, top_i_a = tf.math.top_k(returns, k=k)
-        top_a = tf.gather(a_in, top_i_a)
+
+        #discounted_returns = tf.map_fn(
+        #    lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.9 * elem, r_trajectory)[-1],
+        #    r_pred[:, :, 0]
+        #)
+        #assert np.all(returns.numpy() >= discounted_returns.numpy())
+
+        top_returns, top_i_a_sequence = tf.math.top_k(returns, k=k)
+        top_a_sequence = tf.gather(a_in, top_i_a_sequence)
 
         print(f'Top returns are: {top_returns}')
+        #trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
 
         # MLE for categorical, see
         # https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
         # here we have multiple samples for MLE, which means the parameter update for one timestep is:
         # theta_i = sum_k a_ki / (sum_i sum_k a_ki) with i=action_index, k=sample
-        dist_params = tf.reduce_sum(top_a, axis=1) / tf.reduce_sum(top_a, axis=[0, 1])
+        top_a_sequence_onehot = tf.one_hot(top_a_sequence, n_actions, axis=-1)[:, :, 0, :]  # remove redundant dim
+        numerator = tf.reduce_sum(top_a_sequence_onehot, axis=0)
+        denominator = tf.reduce_sum(top_a_sequence_onehot, axis=[0, 2])[..., tf.newaxis]
+        dist_params = numerator / denominator #tf.reduce_sum(tf.squeeze(top_a_sequence), axis=0) / tf.reduce_sum(top_a_sequence, axis=[0, 1])
 
-    return tfp.distributions.Categorical(logits=dist_params).sample()
+    print(f'Final action probabilities: {dist_params[0]}')
+    return tfp.distributions.Categorical(probs=dist_params).sample()
 
 
 def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=10, top_perc=0.1, render=False):
@@ -249,7 +275,9 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
 
         obs_preprocessed = cast_and_normalize_images(last_observation)
         actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts, n_iterations,
-                      top_perc)
+                       top_perc)
+        act_names = ['up', 'right', 'down', 'left', 'noop']
+        print(f'action: {act_names[actions[0].numpy()]}')
         action = actions[0].numpy()
         observation, reward, done, info = env.step(action)
 
@@ -274,21 +302,23 @@ def split_predictor():
 
     # vae params #
     n_vae_steps = 40000
-    n_embeddings = 128
+    commitment_cost = 0.25
+    n_embeddings = 64
     d_embedding = 32
     frame_stack = 1
 
     # predictor params #
-    n_pred_train_steps = 500#10000
-    n_subtrajectories = 10000
+    n_pred_train_steps = 10000
+    n_subtrajectories = 5000
     n_traj_steps = 15
     n_warmup_steps = 5
     pad_trajectories = True
-    det_filters = 64
+    det_filters = 128
     prob_filters = 128
     decider_lw = 1
     n_models = 1
     pred_batch_size = 64
+    predictor_tensorboard_log = False
 
     #tf.config.run_functions_eagerly(True)
 
@@ -306,11 +336,23 @@ def split_predictor():
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
 
-    vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, frame_stack)
+    vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, commitment_cost, frame_stack)
     #vae.summary()
-    all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters, decider_lw, n_models)
+    all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters,
+                                  decider_lw, n_models, predictor_tensorboard_log)
 
     #all_predictor.summary()
+
+    #traj_info = detect_trajectories(mix_memory)
+    #print(traj_info.shape[0])
+    #print(traj_info[:, 2].sum())
+    #print(mix_memory.shape[0])
+    #quit()
+
+    #rewards = cumulative_episode_rewards(mix_memory)
+    #rewards_from_mem = mix_memory['r'].sum()
+    #plt.plot(rewards, label='cumulative episode rewards')
+    #plt.show()
 
     # train vae
     #load_vae_weights(vae, mix_memory, file_name=vae_weights_path, plots=False)
@@ -323,25 +365,43 @@ def split_predictor():
     #train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
     all_predictor.load_weights('predictors/' + predictor_weights_path)
 
+    #_debug_visualize_trajectory(trajs)
+
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 0)
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 1)
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
     #quit()
 
-    #control(all_predictor, vae, envs[0], env_info, render=True, plan_steps=100)
+    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=60, n_iterations=5, n_rollouts=50, top_perc=0.1)
 
-    targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 1, 4)
+    targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 10, 4)
     rollout_videos(targets, o_rollout, r_rollout, w_predictors, 'Predictor Test')
 
+    # rewards
+    for i, r_traj in enumerate(r_rollout):
+        plt.plot(np.squeeze(r_traj), label=f'rollout {i}')
+    plt.legend()
+    plt.show()
+
+    # predictor choice
     plt.hist(np.array(w_predictors).flatten())
     plt.show()
 
+    # difference between predicted and true observations
     pixel_diff_mean = np.mean(targets - o_rollout, axis=(0, 2, 3, 4))
     pixel_diff_var = np.std(targets - o_rollout, axis=(0, 2, 3, 4))
     x = range(len(pixel_diff_mean))
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
     plt.show()
+
+
+def _debug_visualize_trajectory(trajs):
+    targets = trajs[0]['s'][np.newaxis, ...]
+    o_rollout_dummy = trajs[0]['s'][np.newaxis, ...]
+    weight_dummy = np.array([0 for _ in range(len(targets[0]))])[np.newaxis, ...]
+    rewards = trajs[0]['r'][np.newaxis, ...]
+    rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')
 
 
 def predictor_allocation_stability(predictor, mem, vae, i_env):
@@ -395,17 +455,18 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
 
 
 def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories):
-    if not predictor.open_loop_rollout_training:
-        n_warmup_steps = n_steps
+    #if not predictor.open_loop_rollout_training:
+    #    n_warmup_steps = n_steps
 
     trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, warn=False, pad_short_trajectories=True)
     encoded_obs, _, _, actions = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']
-    if not predictor.open_loop_rollout_training:
-        targets = next_obs[:, :n_warmup_steps]
-    else:
-        targets = next_obs[:, n_warmup_steps - 1:]
+    #if not predictor.open_loop_rollout_training:
+    #    targets = next_obs[:, :n_warmup_steps]
+    #else:
+    #    targets = next_obs[:, n_warmup_steps - 1:]
+    targets = next_obs
     encoded_start_obs = encoded_obs[:, :n_warmup_steps]
 
     #print([env_idx.shape, encoded_start_obs.shape, one_hot_acts.shape])
@@ -421,7 +482,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
 
 def rollout_videos(targets, o_rollouts, r_rollouts, chosen_predictor, video_title, store_animation=False):
     max_pred_idx = chosen_predictor.max() + 1e-5
-    max_reward = r_rollouts.max()
+    max_reward = r_rollouts.max() + 1e-5
     all_videos = []
     all_titles = []
     for i, (ground_truth, o_rollout, r_rollout, pred_weight) in enumerate(zip(targets, o_rollouts, r_rollouts, chosen_predictor)):

@@ -227,8 +227,8 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     dist_params = tf.random.uniform((plan_steps, n_actions), dtype=tf.float32)
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
 
-    act_vec = np.array([0, 0, 1, 1, 1, 1, 1, 1, 2, 2])
-    o_pred, r_pred, pred_weights = predictor([encoded_start_sample[tf.newaxis, ...], act_vec[tf.newaxis, ..., tf.newaxis]])
+    #act_vec = np.array([0, 0, 1, 1, 1, 1, 1, 1, 2, 2])
+    #o_pred, r_pred, pred_weights = predictor([encoded_start_sample[tf.newaxis, ...], act_vec[tf.newaxis, ..., tf.newaxis]])
     #print(r_pred.numpy())
     #quit()
 
@@ -239,15 +239,26 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         a_in = tf.expand_dims(a_in, axis=-1)
 
         o_pred, r_pred, pred_weights = predictor([o_in, a_in])
-        returns = tf.squeeze(tf.reduce_sum(r_pred, axis=1))
+        r_pred = np.squeeze(r_pred.numpy())
 
-        #discounted_returns = tf.map_fn(
-        #    lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.9 * elem, r_trajectory)[-1],
-        #    r_pred[:, :, 0]
-        #)
-        #assert np.all(returns.numpy() >= discounted_returns.numpy())
+        # make sure trajectory ends after reward was collected once
+        processed_r_pred = np.zeros_like(r_pred)
+        for i_traj in range(len(r_pred)):
+            if tf.reduce_sum(r_pred[i_traj]) > 1.0:
+                i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.75))
+                processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
+            else:
+                processed_r_pred[i_traj] = r_pred[i_traj]
 
-        top_returns, top_i_a_sequence = tf.math.top_k(returns, k=k)
+        returns = tf.reduce_sum(processed_r_pred, axis=1)
+
+        # discounted returns to prefer shorter trajectories
+        discounted_returns = tf.map_fn(
+            lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.99 * elem, r_trajectory)[-1],
+            processed_r_pred
+        )
+
+        top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
         top_a_sequence = tf.gather(a_in, top_i_a_sequence)
 
         print(f'Top returns are: {top_returns}')
@@ -263,22 +274,28 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         dist_params = numerator / denominator #tf.reduce_sum(tf.squeeze(top_a_sequence), axis=0) / tf.reduce_sum(top_a_sequence, axis=[0, 1])
 
     print(f'Final action probabilities: {dist_params[0]}')
-    return tfp.distributions.Categorical(probs=dist_params).sample()
+    return tf.argmax(dist_params, axis=1)
+    #return tfp.distributions.Categorical(probs=dist_params).sample()
 
 
-def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=10, top_perc=0.1, render=False):
+def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=5, top_perc=0.1, do_mpc=True, render=False):
     last_observation = env.reset()
     t = 0
+    available_actions = []
     while True:
         if render:
             env.render()
 
-        obs_preprocessed = cast_and_normalize_images(last_observation)
-        actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts, n_iterations,
-                       top_perc)
+        if len(available_actions) == 0:
+            obs_preprocessed = cast_and_normalize_images(last_observation)
+            actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts,
+                           n_iterations, top_perc)
+            available_actions.extend([a for a in actions.numpy()])
+        action = available_actions.pop(0)
+        if do_mpc:
+            available_actions.clear()
         act_names = ['up', 'right', 'down', 'left', 'noop']
-        print(f'action: {act_names[actions[0].numpy()]}')
-        action = actions[0].numpy()
+        print(f'action: {act_names[action]}')
         observation, reward, done, info = env.step(action)
 
         if done:
@@ -372,7 +389,7 @@ def split_predictor():
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
     #quit()
 
-    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=60, n_iterations=5, n_rollouts=50, top_perc=0.1)
+    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=60, n_iterations=5, n_rollouts=100, top_perc=0.05)
 
     targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 10, 4)
     rollout_videos(targets, o_rollout, r_rollout, w_predictors, 'Predictor Test')

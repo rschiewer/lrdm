@@ -224,13 +224,9 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     encoded_start_sample = vae.encode_to_indices(start_sample[tf.newaxis, ...])
     # add axis for time, then repeat n_rollouts times along batch dimension
     o_in = tf.repeat(encoded_start_sample[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
-    dist_params = tf.random.uniform((plan_steps, n_actions), dtype=tf.float32)
+    # initial params for sampling distribution
+    dist_params = tf.ones((plan_steps, n_actions), dtype=tf.float32) / n_actions
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
-
-    #act_vec = np.array([0, 0, 1, 1, 1, 1, 1, 1, 2, 2])
-    #o_pred, r_pred, pred_weights = predictor([encoded_start_sample[tf.newaxis, ...], act_vec[tf.newaxis, ..., tf.newaxis]])
-    #print(r_pred.numpy())
-    #quit()
 
     for i_iter in range(n_iterations):
         # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
@@ -245,16 +241,16 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         processed_r_pred = np.zeros_like(r_pred)
         for i_traj in range(len(r_pred)):
             if tf.reduce_sum(r_pred[i_traj]) > 1.0:
-                i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.75))
+                i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.4))
                 processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
             else:
                 processed_r_pred[i_traj] = r_pred[i_traj]
 
-        returns = tf.reduce_sum(processed_r_pred, axis=1)
+        #returns = tf.reduce_sum(processed_r_pred, axis=1)
 
         # discounted returns to prefer shorter trajectories
         discounted_returns = tf.map_fn(
-            lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.99 * elem, r_trajectory)[-1],
+            lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.9 * elem, r_trajectory)[-1],
             processed_r_pred
         )
 
@@ -276,6 +272,59 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     print(f'Final action probabilities: {dist_params[0]}')
     return tf.argmax(dist_params, axis=1)
     #return tfp.distributions.Categorical(probs=dist_params).sample()
+
+
+def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
+    """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf
+    """
+    # add axis for batch dim when encoding
+    encoded_start_sample = vae.encode_to_indices(start_sample[tf.newaxis, ...])
+    # add axis for time, then repeat n_rollouts times along batch dimension
+    o_in = tf.repeat(encoded_start_sample[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
+    mean = tf.random.uniform((plan_steps,), minval=0, maxval=n_actions - 1, dtype=tf.float32)
+    scale = tf.random.uniform((plan_steps,), dtype=tf.float32)
+    k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
+
+    for i_iter in range(n_iterations):
+        # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
+        # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
+        a_in = tfp.distributions.MultivariateNormalDiag(loc=mean, scale_diag=scale).sample(n_rollouts)
+        a_in = tf.cast(tf.round(a_in), tf.int32)
+        a_in = tf.clip_by_value(a_in, 0, n_actions - 1)
+        a_in = tf.expand_dims(a_in, axis=-1)
+
+        o_pred, r_pred, pred_weights = predictor([o_in, a_in])
+        r_pred = np.squeeze(r_pred.numpy())
+
+        # make sure trajectory ends after reward was collected once
+        processed_r_pred = np.zeros_like(r_pred)
+        for i_traj in range(len(r_pred)):
+            if tf.reduce_sum(r_pred[i_traj]) > 1.0:
+                i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.75))
+                processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
+            else:
+                processed_r_pred[i_traj] = r_pred[i_traj]
+
+        returns = tf.reduce_sum(processed_r_pred, axis=1)
+
+        # discounted returns to prefer shorter trajectories
+        discounted_returns = tf.map_fn(
+            lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.9 * elem, r_trajectory)[-1],
+            processed_r_pred
+        )
+
+        top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
+        top_a_sequence = tf.gather(a_in, top_i_a_sequence)[:, :, 0]
+        top_a_sequence = tf.cast(top_a_sequence, tf.float64)
+
+        print(f'Top returns are: {top_returns}')
+        #trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
+
+        mean, scale = tf.nn.moments(top_a_sequence, axes=[0])
+
+    print(f'Final mean: {mean}')
+    print(f'Final var: {scale}')
+    return tf.cast(tf.round(tfp.distributions.MultivariateNormalDiag(loc=mean, scale_diag=scale).sample()), tf.int32)
 
 
 def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=5, top_perc=0.1, do_mpc=True, render=False):
@@ -308,7 +357,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
 
 def split_predictor():
     # env #
-    env_names, envs, env_info = gen_environments('my_gridworld')
+    env_names, envs, env_info = gen_environments('gridworld_3_rooms')
     #for env_name, env in zip(env_names, envs):
     #    print(f'Environment: {env_name}')
     #    print(f'Observation space: {env.observation_space}')
@@ -389,7 +438,7 @@ def split_predictor():
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
     #quit()
 
-    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=60, n_iterations=5, n_rollouts=100, top_perc=0.05)
+    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=True)
 
     targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 10, 4)
     rollout_videos(targets, o_rollout, r_rollout, w_predictors, 'Predictor Test')
@@ -518,7 +567,7 @@ def rollout_videos(targets, o_rollouts, r_rollouts, chosen_predictor, video_titl
 
 
 def gen_environments(test_setting):
-    if test_setting == 'my_gridworld':
+    if test_setting == 'gridworld_3_rooms':
         env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape

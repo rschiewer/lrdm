@@ -428,15 +428,16 @@ class RecurrentPredictor(keras.Model):
                 r_pred = r_predictions[i]
                 terminal_pred = terminal_predictions[i]
                 w_predictor = w_predictors[i]
-                curr_mdl_obs_err = tf.reduce_mean(tf.losses.categorical_crossentropy(o_groundtruth, o_pred), axis=[2, 3]) * w_predictor
-                curr_mdl_r_err = 0.1 * np.prod(self._h_out_shape) * tf.losses.huber(r_groundtruth, r_pred) * w_predictor
-                curr_mdl_terminal_err = 0.001 * np.prod(self._h_out_shape) * tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred)
+                curr_mdl_unweighted_obs_err = tf.losses.categorical_crossentropy(o_groundtruth, o_pred)
+                curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * w_predictor)
+                curr_mdl_r_err = 0.1 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.huber(r_groundtruth, r_pred) * w_predictor)
+                curr_mdl_terminal_err = 0.001 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
                 total_loss += curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
                 total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
                 total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
-                total_obs_err += tf.reduce_mean(curr_mdl_obs_err)
+                total_obs_err += curr_mdl_obs_err
                 total_r_err += curr_mdl_r_err
                 total_terminal_err += curr_mdl_terminal_err
 
@@ -450,7 +451,7 @@ class RecurrentPredictor(keras.Model):
         self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
         self._vqvae.trainable = vqvae_is_trainable
 
-        o_most_probable, r_most_probable, terminal_most_probable = self.most_probable_trajectories(o_predictions, r_predictions, terminal_predictions, w_predictors)
+        #o_most_probable, r_most_probable, terminal_most_probable = self.most_probable_trajectories(o_predictions, r_predictions, terminal_predictions, w_predictors)
 
         #self._obs_accuracy.update_state(o_groundtruth, o_most_probable)
         #self._rew_accuracy.update_state(r_groundtruth, r_most_probable)
@@ -460,9 +461,9 @@ class RecurrentPredictor(keras.Model):
 
         weight_stats = {f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(self.n_models)}
         stats = {'loss': total_loss, #self._loss_tracker.result(),
-                 'mp_o_err': total_obs_err, #self._obs_accuracy.result(),
-                 'mp_r_err': total_r_err, #self._rew_accuracy.result(),
-                 'mp_term_err': total_terminal_err,
+                 'o_err': total_obs_err, #self._obs_accuracy.result(),
+                 'r_err': total_r_err, #self._rew_accuracy.result(),
+                 'terminal_err': total_terminal_err,
                  't': self._temp(True)}
         stats.update(weight_stats)
         return stats

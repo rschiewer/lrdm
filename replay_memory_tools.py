@@ -61,6 +61,7 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
 
     cand_iter = iter(candidates)
     subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
+    #subtrajectories['done'] = True  # in case of padded subtrajectories, all padded transitions will be terminal
     for i_collected in range(num_trajectories):
         i_traj = np.random.choice(candidates) if random else next(cand_iter)
         i_ts, i_te, n_tl = traj_info[i_traj]

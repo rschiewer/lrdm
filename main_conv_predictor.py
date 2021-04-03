@@ -120,6 +120,7 @@ def load_vae_weights(vae, test_memory, file_name, plots=False):
 def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     actions = trajectories['a'].astype(np.int32)
     rewards = trajectories['r'].astype(np.float32)
+    terminals = trajectories['done'].astype(np.float32)
 
     batch_size = 32
 
@@ -139,12 +140,13 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     encoded_next_obs = encoded_next_obs[:, :n_steps]
     action_inputs = actions[:, 0:n_steps, np.newaxis]
     reward_inputs = rewards[:, 0:n_steps, np.newaxis]
+    terminals_inputs = terminals[:, 0:n_steps, np.newaxis]
 
-    return encoded_obs, encoded_next_obs, reward_inputs, action_inputs
+    return encoded_obs, encoded_next_obs, reward_inputs, action_inputs, terminals_inputs
 
 
 def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n_warmup_steps,  predictor_weights_path, steps_per_epoch=200, batch_size=32):
-    encoded_obs, encoded_next_obs, rewards, actions = prepare_predictor_data(trajectories, vae, n_traj_steps, n_warmup_steps)
+    encoded_obs, encoded_next_obs, rewards, actions, terminals = prepare_predictor_data(trajectories, vae, n_traj_steps, n_warmup_steps)
 
     # sanity check
     #for i_t in range(n_warmup_steps - 1):
@@ -163,7 +165,7 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
     #            plt.imshow(trajectories[i_traj][terminals[0]]['s'][0])
     #            plt.show()
 
-    dataset = (tf.data.Dataset.from_tensor_slices(((encoded_obs, actions), (encoded_next_obs, rewards)))
+    dataset = (tf.data.Dataset.from_tensor_slices(((encoded_obs, actions), (encoded_next_obs, rewards, terminals)))
                .shuffle(50000)
                .repeat(-1)
                .batch(batch_size, drop_remainder=True)
@@ -234,7 +236,7 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         a_in = tfp.distributions.Categorical(probs=dist_params).sample(n_rollouts)
         a_in = tf.expand_dims(a_in, axis=-1)
 
-        o_pred, r_pred, pred_weights = predictor([o_in, a_in])
+        o_pred, r_pred, done_pred, pred_weights = predictor([o_in, a_in])
         r_pred = np.squeeze(r_pred.numpy())
 
         # make sure trajectory ends after reward was collected once
@@ -352,10 +354,11 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
         else:
             last_observation = observation
         t += 1
+    print(f'Environment solved within {t} steps.')
     env.close()
 
 
-def split_predictor():
+def train_routine():
     # env #
     env_names, envs, env_info = gen_environments('gridworld_3_rooms')
     #for env_name, env in zip(env_names, envs):
@@ -384,7 +387,7 @@ def split_predictor():
     decider_lw = 1
     n_models = 1
     pred_batch_size = 64
-    predictor_tensorboard_log = False
+    predictor_tensorboard_log = True
 
     #tf.config.run_functions_eagerly(True)
 
@@ -438,14 +441,18 @@ def split_predictor():
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 2)
     #quit()
 
-    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=True)
-
-    targets, o_rollout, r_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 10, 4)
-    rollout_videos(targets, o_rollout, r_rollout, w_predictors, 'Predictor Test')
+    targets, o_rollout, r_rollout, done_rollout, w_predictors = generate_test_rollouts(all_predictor, mix_memory, vae, 200, 10, 4)
+    rollout_videos(targets, o_rollout, r_rollout, done_rollout, w_predictors, 'Predictor Test')
 
     # rewards
     for i, r_traj in enumerate(r_rollout):
-        plt.plot(np.squeeze(r_traj), label=f'rollout {i}')
+        plt.plot(np.squeeze(r_traj), label=f'reward rollout {i}')
+    plt.legend()
+    plt.show()
+
+    # terminal probabilities
+    for i, done_traj in enumerate(done_rollout):
+        plt.plot(np.squeeze(done_traj), label=f'terminal prob rollout {i}')
     plt.legend()
     plt.show()
 
@@ -460,6 +467,8 @@ def split_predictor():
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
     plt.show()
+
+    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=True)
 
 
 def _debug_visualize_trajectory(trajs):
@@ -525,7 +534,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     #    n_warmup_steps = n_steps
 
     trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, warn=False, pad_short_trajectories=True)
-    encoded_obs, _, _, actions = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
+    encoded_obs, _, _, actions, _ = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']
     #if not predictor.open_loop_rollout_training:
@@ -538,28 +547,31 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     #print([env_idx.shape, encoded_start_obs.shape, one_hot_acts.shape])
 
     # do rollout
-    o_rollout, r_rollout, w_predictors = predictor([encoded_start_obs, actions])
+    o_rollout, r_rollout, terminals_rollout, w_predictors = predictor([encoded_start_obs, actions])
     chosen_predictor = np.argmax(tf.transpose(w_predictors, [1, 2, 0]), axis=-1)
     decoded_rollout_obs = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
     rewards = r_rollout.numpy()
+    terminals = terminals_rollout.numpy()
 
-    return targets, decoded_rollout_obs, rewards, chosen_predictor
+    return targets, decoded_rollout_obs, rewards, terminals, chosen_predictor
 
 
-def rollout_videos(targets, o_rollouts, r_rollouts, chosen_predictor, video_title, store_animation=False):
+def rollout_videos(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor, video_title, store_animation=False):
     max_pred_idx = chosen_predictor.max() + 1e-5
     max_reward = r_rollouts.max() + 1e-5
     all_videos = []
     all_titles = []
-    for i, (ground_truth, o_rollout, r_rollout, pred_weight) in enumerate(zip(targets, o_rollouts, r_rollouts, chosen_predictor)):
+    for i, (ground_truth, o_rollout, r_rollout, done_rollout, pred_weight) in enumerate(zip(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor)):
         weight_imgs = np.stack([np.full_like(ground_truth[0], w) / max_pred_idx * 255 for w in pred_weight])
         reward_imgs = np.stack([np.full_like(ground_truth[0], r) / max_reward * 255 for r in r_rollout])
+        done_imgs = np.stack([np.full_like(ground_truth[0], done) * 255 for done in done_rollout])
         all_videos.extend([np.clip(ground_truth, 0, 255),
                            np.clip(o_rollout, 0, 255),
                            np.clip(reward_imgs, 0, 255),
+                           np.clip(done_imgs, 0, 255),
                            np.clip(weight_imgs, 0, 255)])
-        all_titles.extend([f'true {i}', f'o_rollout {i}', f'r_rollout {i}', f'weight {i}'])
-    anim = trajectory_video(all_videos, all_titles, overall_title=video_title, max_cols=4)
+        all_titles.extend([f'true {i}', f'o_rollout {i}', f'r_rollout {i}', f'done_rollout {i}', f'weight {i}'])
+    anim = trajectory_video(all_videos, all_titles, overall_title=video_title, max_cols=5)
 
     if store_animation:
         writer = animation.writers['ffmpeg'](fps=10, bitrate=1800)
@@ -598,4 +610,4 @@ def gen_environments(test_setting):
 
 
 if __name__ == '__main__':
-    split_predictor()
+    train_routine()

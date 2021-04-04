@@ -29,11 +29,13 @@ class RecurrentPredictor(keras.Model):
         self._vae_n_embeddings = vqvae.num_embeddings
         self._h_out_shape = (*observation_shape, prob_filters)
         self._det_lstm_shape = (*observation_shape, det_filters)
-        self._decider_lw = decider_lw
+        self.decider_lw = decider_lw
         self.open_loop_rollout_training = open_loop_rollout_training
         self.n_models = n_models
         self._vqvae = vqvae
         self.straight_through_gradient = False
+        self.det_filters = det_filters
+        self.prob_filters = prob_filters
 
         self.mdl_stack = []
         for i_mdl in range(n_models):
@@ -213,7 +215,7 @@ class RecurrentPredictor(keras.Model):
             r_predictions = r_predictions.write(i, r_pred)
 
         # retrospectively compute which predictor would have been chosen for which observation
-        dummy_states_decider = self._lstm_start_states(n_batch, self._decider_lw)
+        dummy_states_decider = self._lstm_start_states(n_batch, self.decider_lw)
         params_decider, _ = self.params_decider([o_in] + dummy_states_decider)
         #w_predictors = tfd.RelaxedOneHotCategorical(self._temp_predictor_picker(training), params_decider).sample()
         w_predictors = tf.nn.softmax(params_decider)
@@ -247,7 +249,7 @@ class RecurrentPredictor(keras.Model):
         # placeholders for start
         states_h_0 = tf.stack([self._conv_lstm_start_states(n_batch, self._det_lstm_shape) for _ in range(n_models)])
         states_h_1 = tf.stack([self._conv_lstm_start_states(n_batch, self._det_lstm_shape) for _ in range(n_models)])
-        states_decider = self._lstm_start_states(n_batch, self._decider_lw)
+        states_decider = self._lstm_start_states(n_batch, self.decider_lw)
         o_pred = tf.stack([self._o_dummy(n_batch) for _ in range(n_models)])
         r_pred = tf.stack([self._r_dummy(n_batch) for _ in range(n_models)])
         terminal_pred = tf.stack([self._terminal_dummy(n_batch) for _ in range(n_models)])

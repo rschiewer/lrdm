@@ -2,10 +2,14 @@ import warnings
 import os
 import gym
 import pickle
+
+import numpy
 import numpy as np
 from matplotlib import pyplot as plt, animation
 import tensorflow as tf
 import random
+
+from main_conv_predictor import rollout_videos
 
 
 def detect_trajectories(mem):
@@ -355,3 +359,11 @@ def load_env_samples(file_names):
         memories = memories[0]
 
     return memories
+
+
+def _debug_visualize_trajectory(trajs):
+    targets = trajs[0]['s'][np.newaxis, ...]
+    o_rollout_dummy = trajs[0]['s'][np.newaxis, ...]
+    weight_dummy = np.array([0 for _ in range(len(targets[0]))])[np.newaxis, ...]
+    rewards = trajs[0]['r'][np.newaxis, ...]
+    rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')

@@ -23,17 +23,22 @@ if gpus:
         print(e)
 
 
-def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment_cost, frame_stack=1):
+def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment_cost, frame_stack=1, summary=False):
     assert frame_stack == 1, 'No frame stacking supported currently'
     grayscale_input = obs_shape[-1] == 1
     vae = VectorQuantizerEMAKeras(train_data_var, commitment_cost=commitment_cost, num_embeddings=n_embeddings,
                                   embedding_dim=d_embeddings, grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
-    vae.build((None, *obs_shape))
+
+    if summary:
+        vae.build((None, *obs_shape))
+        vae.summary()
+
     return vae
 
 
-def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log):
+def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log,
+                  summary=False):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
     all_predictor = RecurrentPredictor(vae_index_matrix_shape, n_actions,
                                        vae,
@@ -43,9 +48,13 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        decider_lw=decider_lw,
                                        n_models=n_models, debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
-    net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
-    net_s_act = tf.TensorShape((None, None, 1))
-    #all_predictor.build([net_s_obs, net_s_act])
+
+    if summary:
+        net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
+        net_s_act = tf.TensorShape((None, None, 1))
+        all_predictor.build([net_s_obs, net_s_act])
+        all_predictor.summary()
+
     return all_predictor
 
 
@@ -374,14 +383,13 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
 
 
 def train_routine():
+    # general settings #
+    tensorflow_eager_mode = False
+    model_summaries = False
+    predictor_tensorboard_log = False
+
     # env #
     env_names, envs, env_info = gen_environments('gridworld_3_rooms')
-    #for env_name, env in zip(env_names, envs):
-    #    print(f'Environment: {env_name}')
-    #    print(f'Observation space: {env.observation_space}')
-    #    print(f'Action space: {env.action_space}')
-
-    # sample memory params #
     collect_samples_per_env = 80000
 
     # vae params #
@@ -397,16 +405,16 @@ def train_routine():
     n_traj_steps = 15
     n_warmup_steps = 5
     pad_trajectories = True
-    det_filters = 128
-    prob_filters = 128
-    decider_lw = 1
-    n_models = 1
+    det_filters = 32
+    prob_filters = 32
+    decider_lw = 64
+    n_models = 4
     pred_batch_size = 64
-    predictor_tensorboard_log = False
 
-    #tf.config.run_functions_eagerly(True)
 
     # start training procedure #
+
+    tf.config.run_functions_eagerly(tensorflow_eager_mode)
 
     sample_mem_paths = ['samples/raw/' + env_name for env_name in env_names]
     mix_mem_path = 'samples/mix/' + '_and_'.join(env_names) + '_mix'
@@ -420,12 +428,10 @@ def train_routine():
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
 
-
-    vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, commitment_cost, frame_stack)
-    #vae.summary()
+    vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, commitment_cost, frame_stack,
+                     summary=model_summaries)
     all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters,
-                                  decider_lw, n_models, predictor_tensorboard_log)
-    #all_predictor.summary()
+                                  decider_lw, n_models, predictor_tensorboard_log, summary=model_summaries)
 
     #rewards = cumulative_episode_rewards(mix_memory)
     #rewards_from_mem = mix_memory['r'].sum()
@@ -440,7 +446,7 @@ def train_routine():
     # extract trajectories and train predictor
     trajs = extract_subtrajectories(mix_memory, n_subtrajectories, n_traj_steps, pad_short_trajectories=pad_trajectories)
     #all_predictor.load_weights('predictors/' + predictor_weights_path)
-    #train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
+    train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
     all_predictor.load_weights('predictors/' + predictor_weights_path)
 
     #_debug_visualize_trajectory(trajs)

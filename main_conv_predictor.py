@@ -418,10 +418,6 @@ def train_routine():
     n_warmup_steps = 5
     pad_trajectories = True
     det_filters = 32
-    prob_filters = 32
-    decider_lw = 64
-    n_models = 4
-    det_filters = 32
     prob_filters = 64
     decider_lw = 64
     n_models = 4

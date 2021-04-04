@@ -436,8 +436,8 @@ class RecurrentPredictor(keras.Model):
                 curr_mdl_terminal_err = 0.001 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
                 total_loss += curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
-                total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
-                total_loss += 0.001 * curr_mdl_obs_err * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                total_loss += 0.001 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.001 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
                 total_obs_err += curr_mdl_obs_err
                 total_r_err += curr_mdl_r_err

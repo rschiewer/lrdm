@@ -6,6 +6,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from blockworld import *
 import gym_minigrid
 import tensorflow_probability as tfp
+import neptune.new as neptune
+from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 
 #os.environ['TF_CPP_MIN_LOG_LEVEL']='0'
 
@@ -61,9 +63,14 @@ def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200
                      .batch(batch_size, drop_remainder=True)
                      .prefetch(-1))
 
+    run = neptune.init(project='rschiewer/predictor')
+    neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
+    run['parameters'] = {'n_train_steps': steps, 'vqave_weights_path': file_name}
+    run['sys/tags'].add('vqvae')
+
     #history = vae.fit(train_dataset, epochs=steps, verbose=1, batch_size=batch_size, shuffle=True, validation_split=0.1).history
     epochs = np.ceil(steps / steps_per_epoch).astype(np.int32)
-    history = vae.fit(train_dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1).history
+    history = vae.fit(train_dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1, callbacks=[neptune_cbk]).history
 
     vae.save_weights('vae_model/' + file_name)
     with open('vae_model/' + file_name + '_train_stats', 'wb') as handle:
@@ -171,8 +178,15 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
                .batch(batch_size, drop_remainder=True)
                .prefetch(-1))
 
+    run = neptune.init(project='rschiewer/predictor')
+    neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
+    run['parameters'] = {'n_train_steps': n_train_steps, 'n_traj_steps': n_traj_steps,
+                         'n_warmup_steps': n_warmup_steps, 'predictor_weights_path': predictor_weights_path}
+
+    run['sys/tags'].add('predictor')
+
     epochs = np.ceil(n_train_steps / steps_per_epoch).astype(np.int32)
-    h = predictor.fit(dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1).history
+    h = predictor.fit(dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1, callbacks=[neptune_cbk]).history
     predictor.save_weights('predictors/' + predictor_weights_path)
     with open('predictors/' + predictor_weights_path + '_train_stats', 'wb') as handle:
         pickle.dump(h, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -216,7 +230,6 @@ def load_predictor_weights(complete_predictors_list, env_names, plots=False):
         plt.legend()
         plt.show()
 
-#@tf.function
 def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
@@ -269,7 +282,7 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         top_a_sequence_onehot = tf.one_hot(top_a_sequence, n_actions, axis=-1)[:, :, 0, :]  # remove redundant dim
         numerator = tf.reduce_sum(top_a_sequence_onehot, axis=0)
         denominator = tf.reduce_sum(top_a_sequence_onehot, axis=[0, 2])[..., tf.newaxis]
-        dist_params = numerator / denominator #tf.reduce_sum(tf.squeeze(top_a_sequence), axis=0) / tf.reduce_sum(top_a_sequence, axis=[0, 1])
+        dist_params = numerator / denominator
 
     print(f'Final action probabilities: {dist_params[0]}')
     return tf.argmax(dist_params, axis=1)
@@ -387,7 +400,7 @@ def train_routine():
     decider_lw = 1
     n_models = 1
     pred_batch_size = 64
-    predictor_tensorboard_log = True
+    predictor_tensorboard_log = False
 
     #tf.config.run_functions_eagerly(True)
 
@@ -404,6 +417,7 @@ def train_routine():
 
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
+
 
     vae = vq_vae_net(env_info['obs_shape'], n_embeddings, d_embedding, train_data_var, commitment_cost, frame_stack)
     #vae.summary()
@@ -468,7 +482,7 @@ def train_routine():
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
     plt.show()
 
-    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=True)
+    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=False)
 
 
 def _debug_visualize_trajectory(trajs):

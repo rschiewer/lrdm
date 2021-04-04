@@ -246,7 +246,7 @@ def load_predictor_weights(complete_predictors_list, env_names, plots=False):
         plt.legend()
         plt.show()
 
-def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
+def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
     and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
@@ -259,6 +259,8 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     dist_params = tf.ones((plan_steps, n_actions), dtype=tf.float32) / n_actions
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
 
+    assert n_iterations > 0, f'Number of iterations must be geater than 0 but is {n_iterations}'
+
     for i_iter in range(n_iterations):
         # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
         # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
@@ -266,24 +268,29 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         a_in = tf.expand_dims(a_in, axis=-1)
 
         o_pred, r_pred, done_pred, pred_weights = predictor([o_in, a_in])
-        r_pred = np.squeeze(r_pred.numpy())
 
         # make sure trajectory ends after reward was collected once
-        processed_r_pred = np.zeros_like(r_pred)
-        for i_traj in range(len(r_pred)):
-            if tf.reduce_sum(r_pred[i_traj]) > 1.0:
-                i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.4))
-                processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
-            else:
-                processed_r_pred[i_traj] = r_pred[i_traj]
+        #processed_r_pred = np.zeros_like(r_pred)
+        #for i_traj in range(len(r_pred)):
+        #    if tf.reduce_sum(r_pred[i_traj]) > 1.0:
+        #        i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.4))
+        #        processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
+        #    else:
+        #        processed_r_pred[i_traj] = r_pred[i_traj]
+        done_pred_prepend_dummy = tf.concat([tf.zeros((n_rollouts, 1), dtype=tf.float32), done_pred[:, :-1, 0]], axis=1)
+        discount_factors = tf.map_fn(
+            lambda done_traj: tf.scan(lambda cumulative, elem: cumulative * gamma * (1 - elem), done_traj, initializer=1.0),
+            done_pred_prepend_dummy
+        )
 
+        discounted_returns = tf.reduce_sum(discount_factors * tf.squeeze(r_pred), axis=1)
         #returns = tf.reduce_sum(processed_r_pred, axis=1)
 
         # discounted returns to prefer shorter trajectories
-        discounted_returns = tf.map_fn(
-            lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + 0.9 * elem, r_trajectory)[-1],
-            processed_r_pred
-        )
+        #discounted_returns = tf.map_fn(
+        #    lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + elem, r_trajectory)[-1],
+        #    r_pred * discount_factors
+        #)
 
         top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
         top_a_sequence = tf.gather(a_in, top_i_a_sequence)
@@ -301,8 +308,7 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         dist_params = numerator / denominator
 
     print(f'Final action probabilities: {dist_params[0]}')
-    return tf.argmax(dist_params, axis=1)
-    #return tfp.distributions.Categorical(probs=dist_params).sample()
+    return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
 
 
 def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations=10, top_perc=0.1):
@@ -358,7 +364,8 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
     return tf.cast(tf.round(tfp.distributions.MultivariateNormalDiag(loc=mean, scale_diag=scale).sample()), tf.int32)
 
 
-def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=5, top_perc=0.1, do_mpc=True, render=False):
+def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=5, top_perc=0.1, gamma=0.99,
+            do_mpc=True, render=False):
     last_observation = env.reset()
     t = 0
     available_actions = []
@@ -369,7 +376,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
         if len(available_actions) == 0:
             obs_preprocessed = cast_and_normalize_images(last_observation)
             actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts,
-                           n_iterations, top_perc)
+                           n_iterations, top_perc, gamma)
             available_actions.extend([a for a in actions.numpy()])
         action = available_actions.pop(0)
         if do_mpc:
@@ -414,6 +421,10 @@ def train_routine():
     prob_filters = 32
     decider_lw = 64
     n_models = 4
+    det_filters = 32
+    prob_filters = 64
+    decider_lw = 64
+    n_models = 4
     pred_batch_size = 64
 
 
@@ -454,6 +465,8 @@ def train_routine():
     train_predictor(vae, all_predictor, trajs, n_pred_train_steps, n_traj_steps, n_warmup_steps, predictor_weights_path, batch_size=pred_batch_size)
     all_predictor.load_weights('predictors/' + predictor_weights_path)
 
+    control(all_predictor, vae, envs[2], env_info, render=True, plan_steps=250, n_iterations=5, n_rollouts=250,
+            top_perc=0.05, gamma=0.95, do_mpc=True)
     #_debug_visualize_trajectory(trajs)
 
     #predictor_allocation_stability(all_predictor, mix_memory, vae, 0)
@@ -488,7 +501,6 @@ def train_routine():
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)
     plt.show()
 
-    control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=False)
 
 
 def predictor_allocation_stability(predictor, mem, vae, i_env):
@@ -602,10 +614,7 @@ def gen_environments(test_setting):
         env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
         # envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
         environments = [gym.wrappers.AtariPreprocessing(gym.make(env_name), grayscale_newaxis=True) for env_name in env_names]
-        obs_shape = environments[0].observation        del states_h_0.
-        del states_h_1
-        del states_decider
-_space.shape
+        obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype

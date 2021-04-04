@@ -181,7 +181,9 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
     run = neptune.init(project='rschiewer/predictor')
     neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
     run['parameters'] = {'n_train_steps': n_train_steps, 'n_traj_steps': n_traj_steps,
-                         'n_warmup_steps': n_warmup_steps, 'predictor_weights_path': predictor_weights_path}
+                         'n_warmup_steps': n_warmup_steps, 'predictor_weights_path': predictor_weights_path,
+                         'det_filters': predictor.det_filters, 'prob_filters': predictor.prob_filters,
+                         'decider_lw': predictor.decider_lw, 'n_models': predictor.n_models}
 
     run['sys/tags'].add('predictor')
 
@@ -409,7 +411,7 @@ def train_routine():
     sample_mem_paths = ['samples/raw/' + env_name for env_name in env_names]
     mix_mem_path = 'samples/mix/' + '_and_'.join(env_names) + '_mix'
     vae_weights_path = 'vae_model' + '_and_'.join(env_names) + '_vae_weights'
-    predictor_weights_path = 'predictor_model' + '_and_'.join(env_names) + '_predictor_weights'
+    predictor_weights_path = 'predictor_model' + '_and_'.join(env_names) + '_predictor_weights' + '_' + str(n_models) + '_models'
 
     #memories = gen_data(envs, env_info, samples_per_env=collect_samples_per_env, file_paths=sample_mem_paths)
     #gen_mixed_memory(memories, [1, 1, 1], file_path=mix_mem_path)
@@ -423,14 +425,7 @@ def train_routine():
     #vae.summary()
     all_predictor = predictor_net(env_info['n_actions'], env_info['obs_shape'], vae, det_filters, prob_filters,
                                   decider_lw, n_models, predictor_tensorboard_log)
-
     #all_predictor.summary()
-
-    #traj_info = detect_trajectories(mix_memory)
-    #print(traj_info.shape[0])
-    #print(traj_info[:, 2].sum())
-    #print(mix_memory.shape[0])
-    #quit()
 
     #rewards = cumulative_episode_rewards(mix_memory)
     #rewards_from_mem = mix_memory['r'].sum()
@@ -483,14 +478,6 @@ def train_routine():
     plt.show()
 
     control(all_predictor, vae, envs[1], env_info, render=True, plan_steps=100, n_iterations=3, n_rollouts=200, top_perc=0.1, do_mpc=False)
-
-
-def _debug_visualize_trajectory(trajs):
-    targets = trajs[0]['s'][np.newaxis, ...]
-    o_rollout_dummy = trajs[0]['s'][np.newaxis, ...]
-    weight_dummy = np.array([0 for _ in range(len(targets[0]))])[np.newaxis, ...]
-    rewards = trajs[0]['r'][np.newaxis, ...]
-    rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')
 
 
 def predictor_allocation_stability(predictor, mem, vae, i_env):

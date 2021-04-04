@@ -196,6 +196,11 @@ def train_predictor(vae, predictor, trajectories, n_train_steps, n_traj_steps, n
 
     run['sys/tags'].add('predictor')
 
+    logs = 'tb_profile_log'
+    tboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logs,
+                                                     histogram_freq=1,
+                                                     profile_batch='100, 120')
+
     epochs = np.ceil(n_train_steps / steps_per_epoch).astype(np.int32)
     h = predictor.fit(dataset, epochs=epochs, steps_per_epoch=steps_per_epoch, verbose=1, callbacks=[neptune_cbk]).history
     predictor.save_weights('predictors/' + predictor_weights_path)
@@ -597,7 +602,10 @@ def gen_environments(test_setting):
         env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
         # envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
         environments = [gym.wrappers.AtariPreprocessing(gym.make(env_name), grayscale_newaxis=True) for env_name in env_names]
-        obs_shape = environments[0].observation_space.shape
+        obs_shape = environments[0].observation        del states_h_0.
+        del states_h_1
+        del states_decider
+_space.shape
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype

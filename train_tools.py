@@ -108,13 +108,13 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     return encoded_obs, encoded_next_obs, reward_inputs, action_inputs, terminals_inputs
 
 
-def load_vae_weights(vae, test_memory, file_name, plots=False):
-    vae.load_weights('vae_model/' + file_name).expect_partial()
-    vae.compile(optimizer=tf.optimizers.Adam())
-    with open('vae_model/' + file_name + '_train_stats', 'rb') as handle:
-        history = pickle.load(handle)
+def load_vae_weights(vae, weights_path, train_stats_path=None, plot_training=False, test_memory=None):
+    vae.load_weights(weights_path).expect_partial()
+    #vae.compile(optimizer=tf.optimizers.Adam())
 
-    if plots:
+    if plot_training:
+        with open(train_stats_path, 'rb') as handle:
+            history = pickle.load(handle)
         for stat_name, stat_val in history.items():
             plt.plot(stat_val, label=stat_name)
 
@@ -122,6 +122,7 @@ def load_vae_weights(vae, test_memory, file_name, plots=False):
         plt.legend()
         plt.show()
 
+    if test_memory is not None:
         trajs = None
         while trajs is None:
             try:

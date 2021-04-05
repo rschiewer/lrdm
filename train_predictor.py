@@ -81,5 +81,6 @@ if __name__ == '__main__':
                        verbose=1,
                        callbacks=callbacks)
 
+    pred.save_weights(predictor_weights_path)
     with open(predictor_train_stats_path, 'wb') as handle:
         pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)

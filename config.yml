@@ -1,5 +1,6 @@
 tf_eager_mode: False
 model_summaries: False
+neptune_project_name: 'rschiewer/predictor'
 
 env_setting: 'gridworld_3_rooms'
 env_n_samples_per_env: 80000

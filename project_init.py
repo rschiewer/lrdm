@@ -22,6 +22,7 @@ if gpus:
 class ExperimentConfig(YamlDataClassConfig):
     tf_eager_mode: bool = None
     model_summaries: bool = None
+    neptune_project_name: str = None
 
     env_setting: str = None
     env_n_samples_per_env: int = None

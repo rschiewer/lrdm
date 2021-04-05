@@ -32,12 +32,14 @@ class ExperimentConfig(YamlDataClassConfig):
     env_name_concat: str = None
 
     vae_n_train_steps: int = None
+    vae_n_steps_per_epoch: int = None
     vae_batch_size: int = None
     vae_commitment_cost: float = None
     vae_n_embeddings: int = None
     vae_d_embeddings: int = None
     vae_frame_stack: int = None
     vae_weights_path: str = None
+    vae_train_stats_path: str = None
 
     pred_n_train_steps: int = None
     pred_n_steps_per_epoch: int = None
@@ -52,6 +54,7 @@ class ExperimentConfig(YamlDataClassConfig):
     pred_batch_size: int = None
     pred_tb_log: bool = None
     pred_weights_path: str = None
+    pred_train_stats_path: str = None
 
     FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config.yml')
 
@@ -63,12 +66,23 @@ CONFIG.load()
 def gen_sample_mem_paths(env_names):
     return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
 
+
 def gen_mix_mem_path(env_names):
     return CONFIG.env_mix_mem_path_stub + CONFIG.env_name_concat.join(env_names)
+
 
 def gen_vae_weights_path(env_names):
     return CONFIG.vae_weights_path + '_and_'.join(env_names)
 
+
+def gen_vae_train_stats_path(env_names):
+    return CONFIG.vae_train_stats_path + '_and_'.join(env_names)
+
+
 def gen_predictor_weights_path(env_names):
     return CONFIG.pred_weights_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
+
+
+def gen_predictor_train_stats_path(env_names):
+    return CONFIG.pred_train_stats_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
 

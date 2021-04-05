@@ -2,6 +2,7 @@ import pickle
 
 import gym
 import gym_minigrid
+import blockworld
 import numpy as np
 import tensorflow as tf
 from matplotlib import pyplot as plt, animation

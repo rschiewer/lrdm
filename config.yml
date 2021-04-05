@@ -1,6 +1,6 @@
 tf_eager_mode: False
 model_summaries: False
-neptune_project_name: 'rschiewer/predictor'
+neptune_project_name: '' #'rschiewer/predictor'
 
 env_setting: 'gridworld_3_rooms'
 env_n_samples_per_env: 80000
@@ -32,4 +32,4 @@ pred_n_models: 4
 pred_batch_size: 64
 pred_tb_log: False
 pred_weights_path: 'predictor_models/'
-pred_train_stats_path: 'predictor_models/'
+pred_train_stats_path: 'predictor_models/train_stats/'

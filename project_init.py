@@ -63,6 +63,14 @@ CONFIG = ExperimentConfig()
 CONFIG.load()
 
 
+# check if all directories for logging and storing stuff exist, generate if not present
+for k, v in vars(CONFIG).items():
+    if type(v) is str and '/' in v:
+        p = Path(v)
+        if not p.is_dir():
+            p.mkdir()
+
+
 def gen_sample_mem_paths(env_names):
     return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
 

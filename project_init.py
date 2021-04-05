@@ -37,6 +37,7 @@ class ExperimentConfig(YamlDataClassConfig):
     vae_weights_path: str = None
 
     pred_n_train_steps: int = None
+    pred_n_steps_per_epoch: int = None
     pred_n_trajectories: int = None
     pred_n_traj_steps: int = None
     pred_n_warmup_steps: int = None
@@ -55,4 +56,16 @@ class ExperimentConfig(YamlDataClassConfig):
 CONFIG = ExperimentConfig()
 CONFIG.load()
 
+
+def gen_sample_mem_paths(env_names):
+    return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
+
+def gen_mix_mem_path(env_names):
+    return CONFIG.env_mix_mem_path_stub + CONFIG.env_name_concat.join(env_names)
+
+def gen_vae_weights_path(env_names):
+    return CONFIG.vae_weights_path + '_and_'.join(env_names)
+
+def gen_predictor_weights_path(env_names):
+    return CONFIG.pred_weights_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
 

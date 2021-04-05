@@ -18,7 +18,7 @@ class RecurrentPredictor(keras.Model):
         else:
             self._tensorboard_log = False
             self.summary_writer = None
-            self.summary_writer = tf.summary.create_file_writer(f'./tensorboard_debug_logs')
+            #self.summary_writer = tf.summary.create_file_writer(f'./tensorboard_debug_logs')
 
         super(RecurrentPredictor, self).__init__(**kwargs)
 
@@ -185,7 +185,7 @@ class RecurrentPredictor(keras.Model):
     def _w_pred_dummy(self, n_batch):
         return tf.fill([n_batch, 1, len(self.mdl_stack)], 1.0 / len(self.mdl_stack))
 
-    @tf.function
+    #@tf.function
     def _rollout_closed_loop(self, inputs, training=None):
         o_in, a_in = inputs
         n_batch = tf.shape(a_in)[0]
@@ -234,7 +234,8 @@ class RecurrentPredictor(keras.Model):
         t_start_feedback = n_warmup
 
         # pad o_in with zeros to avoid out of bounds indexing in _next_input (if-else tf autograph bullshit)
-        o_in_padded = tf.concat([o_in, tf.zeros((n_batch, n_predict - n_warmup, *self.s_obs, self._vae_n_embeddings))], axis=1)
+        #o_in_padded = tf.concat([o_in, tf.zeros((n_batch, n_predict - n_warmup, *self.s_obs, self._vae_n_embeddings))], axis=1)
+        o_in_padded = o_in
 
         #tf.debugging.assert_less(n_warmup, n_predict, ('For rollout, less observations than actions are expected, '
         #                                               f'but I got {n_warmup} observation and {n_predict} action '
@@ -251,8 +252,8 @@ class RecurrentPredictor(keras.Model):
         states_h_1 = tf.stack([self._conv_lstm_start_states(n_batch, self._det_lstm_shape) for _ in range(n_models)])
         states_decider = self._lstm_start_states(n_batch, self.decider_lw)
         o_pred = tf.stack([self._o_dummy(n_batch) for _ in range(n_models)])
-        r_pred = tf.stack([self._r_dummy(n_batch) for _ in range(n_models)])
-        terminal_pred = tf.stack([self._terminal_dummy(n_batch) for _ in range(n_models)])
+        #r_pred = tf.stack([self._r_dummy(n_batch) for _ in range(n_models)])
+        #terminal_pred = tf.stack([self._terminal_dummy(n_batch) for _ in range(n_models)])
         w_pred = self._w_pred_dummy(n_batch)  # same probability for each model before first observation
 
         # rollout start
@@ -305,15 +306,17 @@ class RecurrentPredictor(keras.Model):
         terminal_predictions = tf.transpose(terminal_predictions, [1, 2, 0, 3])
         w_predictors = tf.transpose(w_predictors, [2, 1, 0])
 
+        """
         with tf.summary.record_if(self._tensorboard_log):
             with self.summary_writer.as_default():
                 for i_pred in range(self.n_models):
                     h_pred_cur = tf.gather(states_h_0, i_pred)
                     tf.summary.histogram(f'final step lstm states cell 0 pred_{i_pred}', tf.reshape(h_pred_cur, (-1,)), step=self._train_step)
+        """
 
         return o_predictions, r_predictions, terminal_predictions, w_predictors
 
-    @tf.function
+    #@tf.function
     def _open_loop_step(self, det_model, params_o_model, params_r_model, terminal_mdl, o_inp, a_inp, states_h_0, states_h_1, training):
         h, states_h_0, states_h_1 = det_model([o_inp, a_inp, states_h_0[0], states_h_0[1], states_h_1[0], states_h_1[1]], training=training)
         params_o = params_o_model(h, training=training)
@@ -332,7 +335,7 @@ class RecurrentPredictor(keras.Model):
 
         return o_pred, r_pred, terminal_pred, states_h_0, states_h_1
 
-    @tf.function
+    #@tf.function
     def call(self, inputs, mask=None, training=None):
         o_in, a_in = inputs
 
@@ -354,7 +357,7 @@ class RecurrentPredictor(keras.Model):
 
         return o_predicted, r_predicted, terminal_predicted, w_predictors
 
-    @tf.function
+    #@tf.function
     def most_probable_trajectories(self, o_predictions, r_predictions, terminal_predictions, w_predictors):
         # o_predictions shape: (predictor, batch, timestep, width, height, one_hot_index)
         # push predictor index backwards for easier selection
@@ -376,7 +379,7 @@ class RecurrentPredictor(keras.Model):
         self._vqvae.trainable = vqvae_is_trainable
         return n_weights
 
-    @tf.function
+    #@tf.function
     def train_step(self, data):
         tf.assert_equal(len(data), 2), f'Need tuple (x, y) for training, got {len(data)}'
 
@@ -392,6 +395,7 @@ class RecurrentPredictor(keras.Model):
             terminal_groundtruth = y[2]
 
             o_predictions, r_predictions, terminal_predictions, w_predictors = self(x, training=True)
+            """
             with tf.summary.record_if(self._tensorboard_log):
                 with self.summary_writer.as_default():
                     #tf.summary.trace_on(graph=True, profiler=True)
@@ -418,6 +422,7 @@ class RecurrentPredictor(keras.Model):
                         log_predicted = self._vqvae.decode_from_indices(tf.expand_dims(tf.argmax(o_current_timeline[0, -1], axis=-1), axis=0))
                         tf.summary.image(f'o_predicted_{i_pred}', log_predicted, step=self._train_step)
                         tf.summary.scalar(f'r_predicted_{i_pred}', tf.reduce_sum(r_current_timeline), step=self._train_step)
+            """
 
             total_loss = 0.0
             total_obs_err = 0.0
@@ -433,11 +438,11 @@ class RecurrentPredictor(keras.Model):
                 curr_mdl_unweighted_obs_err = tf.losses.categorical_crossentropy(o_groundtruth, o_pred)
                 curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * w_predictor)
                 curr_mdl_r_err = 0.1 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.huber(r_groundtruth, r_pred) * w_predictor)
-                curr_mdl_terminal_err = 0.001 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
+                curr_mdl_terminal_err = 0.005 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
                 total_loss += curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
-                total_loss += 0.001 * tf.reduce_sum(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
-                total_loss += 0.001 * tf.reduce_sum(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                total_loss += 0.01 * tf.reduce_mean(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.001 * tf.reduce_mean(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
                 total_obs_err += curr_mdl_obs_err
                 total_r_err += curr_mdl_r_err
@@ -468,9 +473,10 @@ class RecurrentPredictor(keras.Model):
                  'terminal_err': total_terminal_err,
                  't': self._temp(True)}
         stats.update(weight_stats)
+
         return stats
 
-    @tf.function
+    #@tf.function
     def _next_input(self, o_in, a_in, o_last, w_pred, i_t, feedback):
         if i_t < feedback:
             o_next = o_in[:, i_t, tf.newaxis]

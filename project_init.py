@@ -2,6 +2,19 @@ from dataclasses import dataclass
 from yamldataclassconfig import create_file_path_field
 from yamldataclassconfig.config import YamlDataClassConfig
 from pathlib import Path
+import tensorflow as tf
+
+
+# see https://www.tensorflow.org/guide/gpu
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
 
 
 @dataclass

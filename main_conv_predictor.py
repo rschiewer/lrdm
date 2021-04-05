@@ -6,19 +6,9 @@ from blockworld import *
 import tensorflow_probability as tfp
 import neptune.new as neptune
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
+from project_init import CONFIG
 
 #os.environ['TF_CPP_MIN_LOG_LEVEL']='0'
-
-# see https://www.tensorflow.org/guide/gpu
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-    except RuntimeError as e:
-        # Memory growth must be set before GPUs have been initialized
-        print(e)
 
 
 def train_vae(vae, memory, steps, file_name, batch_size=256, steps_per_epoch=200):

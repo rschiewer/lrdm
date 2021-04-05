@@ -1,5 +1,5 @@
 from replay_memory_tools import gen_data, gen_mixed_memory
-from config_loader import CONFIG
+from project_init import CONFIG
 from train_tools import gen_environments
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@ model_summaries: False
 
 env_setting: 'gridworld_3_rooms'
 env_n_samples_per_env: 80000
+env_mix_memory_fraction: 1.0
 env_sample_mem_path_stub: 'samples/raw/'
 env_mix_mem_path_stub: 'samples/mix/'
 env_name_concat: '_and_'
@@ -16,6 +17,7 @@ vae_frame_stack: 1
 vae_weights_path: 'vae_models'
 
 pred_n_train_steps: 10000
+pred_n_steps_per_epoch: 200
 pred_n_trajectories: 5000
 pred_n_traj_steps: 15
 pred_n_warmup_steps: 5

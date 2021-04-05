@@ -3,6 +3,7 @@ from yamldataclassconfig import create_file_path_field
 from yamldataclassconfig.config import YamlDataClassConfig
 from pathlib import Path
 import tensorflow as tf
+from typing import Union, List
 
 
 # see https://www.tensorflow.org/guide/gpu
@@ -24,6 +25,7 @@ class ExperimentConfig(YamlDataClassConfig):
 
     env_setting: str = None
     env_n_samples_per_env: int = None
+    env_mix_memory_fraction: Union[float, List[float]] = None
     env_sample_mem_path_stub: str = None
     env_mix_mem_path_stub: str = None
     env_name_concat: str = None

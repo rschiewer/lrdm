@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
 import sksfa
 
-from main_conv_predictor import vq_vae_net, train_vae, load_vae_weights
+from main_conv_predictor import train_vae
+from train_tools import vq_vae_net, load_vae_weights
 from old_predictors import AutoregressiveProbabilisticPredictor
 from replay_memory_tools import load_env_samples, extract_subtrajectories, trajectory_video
 from vae import *

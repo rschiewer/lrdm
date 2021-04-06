@@ -56,11 +56,11 @@ class ExperimentConfig(YamlDataClassConfig):
     pred_weights_path: str = None
     pred_train_stats_path: str = None
 
-    FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config.yml')
+    #FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config_1_pred.yml')
 
 
 CONFIG = ExperimentConfig()
-CONFIG.load()
+CONFIG.load('config_1_pred.yml')
 
 
 # check if all directories for logging and storing stuff exist, generate if not present

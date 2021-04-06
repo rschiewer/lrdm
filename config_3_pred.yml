@@ -1,0 +1,35 @@
+tf_eager_mode: False
+model_summaries: False
+neptune_project_name: 'rschiewer/predictor'
+
+env_setting: 'gridworld_3_rooms'
+env_n_samples_per_env: 80000
+env_mix_memory_fraction: 1.0
+env_sample_mem_path_stub: 'samples/raw/'
+env_mix_mem_path_stub: 'samples/mix/'
+env_name_concat: '_and_'
+
+vae_n_train_steps: 40000
+vae_n_steps_per_epoch: 200
+vae_batch_size: 512
+vae_commitment_cost: 0.25
+vae_n_embeddings: 64
+vae_d_embeddings: 32
+vae_frame_stack: 1
+vae_weights_path: 'vae_models/'
+vae_train_stats_path: 'vae_models/train_stats/'
+
+pred_n_train_steps: 10000
+pred_n_steps_per_epoch: 200
+pred_n_trajectories: 5000
+pred_n_traj_steps: 15
+pred_n_warmup_steps: 5
+pred_pad_trajectories: True
+pred_det_filters: 64
+pred_prob_filters: 64
+pred_decider_lw: 128
+pred_n_models: 3
+pred_batch_size: 128
+pred_tb_log: False
+pred_weights_path: 'predictor_models/'
+pred_train_stats_path: 'predictor_models/train_stats/'

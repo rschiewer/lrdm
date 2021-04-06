@@ -1,5 +1,5 @@
 from replay_memory_tools import *
-from train_tools import *
+from tools import *
 from project_init import *
 
 if __name__ == '__main__':

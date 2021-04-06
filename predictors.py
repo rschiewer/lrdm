@@ -67,9 +67,9 @@ class RecurrentPredictor(keras.Model):
 
         x_params_pred = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
         x_params_pred = layers.Lambda(lambda inp: obs_flatten(inp))(x_params_pred)
-        x_params_pred = layers.TimeDistributed(layers.Dense(64, activation='relu'))(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
         #x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
-        x_params_pred = layers.TimeDistributed(layers.Dense(64, activation='relu'))(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
         #x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
         x_params_pred, *lstm_states = layers.LSTM(decider_lw, return_state=True, return_sequences=True)(x_params_pred, initial_state=[lstm_c, lstm_h])
         x_params_pred = layers.TimeDistributed(layers.Dense(n_mdl, activation=None, name='p_pred_out'))(x_params_pred)

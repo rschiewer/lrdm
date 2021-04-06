@@ -1,5 +1,5 @@
 from project_init import *
-from train_tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights, \
+from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights, \
     prepare_predictor_data
 from replay_memory_tools import load_env_samples, line_up_observations,\
     stack_observations, cast_and_normalize_images, cast_and_unnormalize_images

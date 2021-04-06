@@ -1,5 +1,5 @@
 from project_init import *
-from train_tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights,\
+from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights,\
     prepare_predictor_data
 from replay_memory_tools import load_env_samples, extract_subtrajectories
 import numpy as np
@@ -7,6 +7,7 @@ import tensorflow as tf
 import neptune.new as neptune
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 import pickle
+import gc
 
 
 if __name__ == '__main__':
@@ -72,6 +73,12 @@ if __name__ == '__main__':
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor')
         callbacks.append(neptune_cbk)
+
+    class MyCustomCallback(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            gc.collect()
+            tf.keras.backend.clear_session()
+    callbacks.append(MyCustomCallback())
 
     # all_predictor.load_weights('predictors/' + predictor_weights_path)
     epochs = np.ceil(CONFIG.pred_n_train_steps / CONFIG.pred_n_steps_per_epoch).astype(np.int32)

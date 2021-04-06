@@ -1,5 +1,5 @@
 from project_init import *
-from train_tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights
+from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights
 from replay_memory_tools import load_env_samples, extract_subtrajectories
 import numpy as np
 

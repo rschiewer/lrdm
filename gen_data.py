@@ -1,6 +1,6 @@
 from replay_memory_tools import gen_data, gen_mixed_memory
 from project_init import CONFIG
-from train_tools import gen_environments
+from tools import gen_environments
 
 if __name__ == '__main__':
      env_names, envs, env_info = gen_environments(CONFIG.env_setting)

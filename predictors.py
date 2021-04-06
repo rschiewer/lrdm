@@ -45,14 +45,14 @@ class RecurrentPredictor(keras.Model):
             terminal_model = self._terminal(self._h_out_shape, prob_filters)
             self.mdl_stack.append((det_model, params_o_model, params_r_model, terminal_model))
 
-        self.params_decider = self._gen_params_decider(self.s_obs, n_models, decider_lw, vqvae)
+        self.params_decider = self._gen_params_decider(self.s_obs, self._h_out_shape, n_models, decider_lw, vqvae)
 
         self._obs_accuracy = tf.keras.metrics.CategoricalCrossentropy(name='crossentropy_error')
         self._rew_accuracy = tf.keras.metrics.MeanSquaredError(name='mse')
         self._loss_tracker = tf.keras.metrics.Mean(name='loss')
         self._predictor_weights_tracker = [tf.keras.metrics.Mean(name=f'predictor_{i}_weight') for i in range(n_models)]
 
-    def _gen_params_decider(self, s_obs, n_mdl, decider_lw, vqvae):
+    def _gen_params_decider(self, s_obs, s_h, n_mdl, decider_lw, vqvae):
         def obs_flatten(inp):
             n_batch = tf.shape(inp)[0]
             n_time = tf.shape(inp)[1]
@@ -61,15 +61,20 @@ class RecurrentPredictor(keras.Model):
         # TODO: add action and reward input
 
         in_o = layers.Input((None, *s_obs, vqvae.num_embeddings), name='p_pred_o_in')
+        #in_h = layers.Input((None, *s_h), name='p_pred_in')
         lstm_c = layers.Input((decider_lw,), name='p_pred_lstm_c')
         lstm_h = layers.Input((decider_lw,), name='p_pred_lstm_h')
         index_transform_fn = self._index_transform_fn(vqvae)
 
-        x_params_pred = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
-        x_params_pred = layers.Lambda(lambda inp: obs_flatten(inp))(x_params_pred)
-        x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
+        o_cb_vectors = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
+        #x_params_pred = layers.Concatenate(axis=-1)([o_cb_vectors, in_h])
+        x_params_pred = layers.TimeDistributed(layers.Conv2D(decider_lw, strides=(2,2), kernel_size=4, padding='SAME', activation='relu'))(o_cb_vectors)
+        x_params_pred = layers.TimeDistributed(layers.Conv2D(decider_lw // 2, strides=(2,2), kernel_size=3, padding='SAME', activation='relu'))(x_params_pred)
+        #x_params_pred = layers.Lambda(lambda inp: obs_flatten(inp))(x_params_pred)
+        x_params_pred = layers.TimeDistributed(layers.Flatten())(x_params_pred)
+        #x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
         #x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
-        x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
+        #x_params_pred = layers.TimeDistributed(layers.Dense(decider_lw, activation='relu'))(x_params_pred)
         #x_params_pred = layers.TimeDistributed(layers.LayerNormalization())(x_params_pred)
         x_params_pred, *lstm_states = layers.LSTM(decider_lw, return_state=True, return_sequences=True)(x_params_pred, initial_state=[lstm_c, lstm_h])
         x_params_pred = layers.TimeDistributed(layers.Dense(n_mdl, activation=None, name='p_pred_out'))(x_params_pred)
@@ -335,7 +340,7 @@ class RecurrentPredictor(keras.Model):
 
         return o_pred, r_pred, terminal_pred, states_h_0, states_h_1
 
-    #@tf.function
+    @tf.function
     def call(self, inputs, mask=None, training=None):
         o_in, a_in = inputs
 
@@ -441,8 +446,8 @@ class RecurrentPredictor(keras.Model):
                 curr_mdl_terminal_err = 0.005 * np.prod(self._h_out_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
                 total_loss += curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
-                total_loss += 0.01 * tf.reduce_mean(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
-                total_loss += 0.001 * tf.reduce_mean(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
+                total_loss += 0.1 * tf.reduce_mean(tf.math.multiply(w_predictor, tf.math.log(w_predictor)))  # regularization to incentivize picker to not let a predictor starve
+                total_loss += 0.01 * tf.reduce_mean(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
 
                 total_obs_err += curr_mdl_obs_err
                 total_r_err += curr_mdl_r_err

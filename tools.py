@@ -5,7 +5,6 @@ from typing import Union, List
 
 import gym
 import gym_minigrid
-import blockworld
 import numpy as np
 import tensorflow as tf
 import yaml
@@ -14,7 +13,6 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
-from project_init import CONFIG
 from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
     unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
 
@@ -368,6 +366,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
 
     ctrl_n_runs: int = None
     ctrl_n_plan_steps: int = None
+    ctrl_n_warmup_steps: int = None
     ctrl_n_rollouts: int = None
     ctrl_n_iterations: int = None
     ctrl_top_perc: float = None
@@ -376,27 +375,3 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     ctrl_render: bool = None
 
     #FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config_general.yml')
-
-
-def gen_sample_mem_paths(env_names):
-    return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
-
-
-def gen_mix_mem_path(env_names):
-    return CONFIG.env_mix_mem_path_stub + CONFIG.env_name_concat.join(env_names)
-
-
-def gen_vae_weights_path(env_names):
-    return CONFIG.vae_weights_path + '_and_'.join(env_names)
-
-
-def gen_vae_train_stats_path(env_names):
-    return CONFIG.vae_train_stats_path + '_and_'.join(env_names)
-
-
-def gen_predictor_weights_path(env_names):
-    return CONFIG.pred_weights_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
-
-
-def gen_predictor_train_stats_path(env_names):
-    return CONFIG.pred_train_stats_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)

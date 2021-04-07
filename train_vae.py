@@ -1,5 +1,6 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net, gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path
+from tools import gen_environments, vq_vae_net
+from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path
 from replay_memory_tools import load_env_samples, line_up_observations,\
     stack_observations, cast_and_normalize_images
 import numpy as np

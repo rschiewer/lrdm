@@ -32,3 +32,27 @@ if gpus:
 
 CONFIG = ExperimentConfig()
 CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_1_mdl.yml', 'config_vae.yml'])
+
+
+def gen_sample_mem_paths(env_names):
+    return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
+
+
+def gen_mix_mem_path(env_names):
+    return CONFIG.env_mix_mem_path_stub + CONFIG.env_name_concat.join(env_names)
+
+
+def gen_vae_weights_path(env_names):
+    return CONFIG.vae_weights_path + '_and_'.join(env_names)
+
+
+def gen_vae_train_stats_path(env_names):
+    return CONFIG.vae_train_stats_path + '_and_'.join(env_names)
+
+
+def gen_predictor_weights_path(env_names):
+    return CONFIG.pred_weights_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
+
+
+def gen_predictor_train_stats_path(env_names):
+    return CONFIG.pred_train_stats_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)

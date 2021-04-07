@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 from replay_memory_tools import cast_and_normalize_images
+from tools import ValueHistory
 
 
 def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
@@ -128,15 +129,19 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
 
 def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5, top_perc=0.1,
             gamma=0.99, do_mpc=True, render=False):
-    last_observation = env.reset()
+    act_history = ValueHistory((1,), warmup_steps - 1)
+    obs_history = ValueHistory(env_info['obs_shape'], warmup_steps)
+    available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
     t = 0
     r = 0
-    available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
-    act_history = np.zeros((warmup_steps, env_info['n_actions']))
-    obs_history = np.zeros((warmup_steps, ))
+
+    last_observation = env.reset()
+    obs_history.append(last_observation)
 
     for a in available_actions:
         last_observation, _, _, _ = env.step(a)
+        act_history.append(a)
+        obs_history.append(last_observation)
         env.render()
 
     available_actions.clear()
@@ -153,12 +158,19 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
         action = available_actions.pop(0)
         if do_mpc:
             available_actions.clear()
+
         act_names = ['up', 'right', 'down', 'left', 'noop']
         print(f'action: {act_names[action]}')
         observation, reward, done, info = env.step(action)
 
         reward += r
         t += 1
+
+        act_history.append(action)
+        if len(act_history) > warmup_steps - 1:
+            act_history.pop(0)
+        obs_history.append(observation)
+        if len(obs_history) > warmup_steps:
 
         if done:
             break

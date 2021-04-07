@@ -307,6 +307,35 @@ def _debug_visualize_trajectory(trajs):
     rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')
 
 
+class ValueHistory:
+
+    def __init__(self, s_val, n_timesteps):
+        self.s_val = s_val
+        self._max_len = n_timesteps
+        self._data = []
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, index):
+        return self._data[index]
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError('Setting items directly is forbidden')
+
+    def append(self, item):
+        assert np.shape(item) == self.s_val, f'Expected shape of {self.s_val} but got shape {np.shape(item)}'
+        self._data.append(item)
+        if len(self._data) > self._max_len:
+            self._data.pop(0)
+
+    def full_history(self):
+        return self._data
+
+    def clear(self):
+        self._data.clear()
+
+
 class MultiYamlDataClassConfig(YamlDataClassConfig):
 
     def load(self, file_paths: Union[Path, str, List[Path], List[str]] = None, path_is_absolute: bool = False):

@@ -1,8 +1,7 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights, \
-    prepare_predictor_data
+from tools import gen_environments, vq_vae_net, gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path
 from replay_memory_tools import load_env_samples, line_up_observations,\
-    stack_observations, cast_and_normalize_images, cast_and_unnormalize_images
+    stack_observations, cast_and_normalize_images
 import numpy as np
 import tensorflow as tf
 import neptune.new as neptune

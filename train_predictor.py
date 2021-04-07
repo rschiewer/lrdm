@@ -1,12 +1,12 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights,\
-    prepare_predictor_data
+from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights, \
+    prepare_predictor_data, gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path, \
+    gen_predictor_train_stats_path
 from replay_memory_tools import load_env_samples, extract_subtrajectories
 import numpy as np
 import tensorflow as tf
 import neptune.new as neptune
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
-import pickle
 import gc
 
 
@@ -73,6 +73,8 @@ if __name__ == '__main__':
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor')
         callbacks.append(neptune_cbk)
+    else:
+        run = None
 
     class MyCustomCallback(tf.keras.callbacks.Callback):
         def on_epoch_end(self, epoch, logs=None):
@@ -82,12 +84,27 @@ if __name__ == '__main__':
 
     # all_predictor.load_weights('predictors/' + predictor_weights_path)
     epochs = np.ceil(CONFIG.pred_n_train_steps / CONFIG.pred_n_steps_per_epoch).astype(np.int32)
-    history = pred.fit(dataset,
-                       epochs=epochs,
-                       steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
-                       verbose=1,
-                       callbacks=callbacks)
+    #history = pred.fit(dataset,
+    #                   epochs=epochs,
+    #                   steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
+    #                   verbose=1,
+    #                   callbacks=callbacks)
+
+    # custom train loop because of memory leak in train_step, try to fix in the future
+    dset_iter = iter(dataset)
+    for epoch in range(epochs):
+        for step in range(CONFIG.pred_n_steps_per_epoch):
+            batch = next(dset_iter)
+            loss_stats = pred.train_step(batch)
+            train_str = f'{epoch + 1}/{epochs}: '
+            for k, v in loss_stats.items():
+                train_str += f'{k}: {v:3.5f}\t'
+                if run:
+                    run[k].log(v)
+            print(train_str)
+
+
 
     pred.save_weights(predictor_weights_path)
-    with open(predictor_train_stats_path, 'wb') as handle:
-        pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    #with open(predictor_train_stats_path, 'wb') as handle:
+    #    pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)

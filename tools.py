@@ -1,15 +1,20 @@
 import pickle
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Union, List
 
 import gym
 import gym_minigrid
 import blockworld
 import numpy as np
 import tensorflow as tf
+import yaml
 from matplotlib import pyplot as plt, animation
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-
+from yamldataclassconfig import YamlDataClassConfig
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
+from project_init import CONFIG
 from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
     unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
 
@@ -255,7 +260,9 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     #    targets = next_obs[:, :n_warmup_steps]
     #else:
     #    targets = next_obs[:, n_warmup_steps - 1:]
-    targets = next_obs
+    targets_obs = next_obs
+    targets_r = trajectories['r']
+    targets_done = trajectories['done']
     encoded_start_obs = encoded_obs[:, :n_warmup_steps]
 
     #print([env_idx.shape, encoded_start_obs.shape, one_hot_acts.shape])
@@ -264,10 +271,10 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     o_rollout, r_rollout, terminals_rollout, w_predictors = predictor([encoded_start_obs, actions])
     chosen_predictor = np.argmax(tf.transpose(w_predictors, [1, 2, 0]), axis=-1)
     decoded_rollout_obs = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
-    rewards = r_rollout.numpy()
-    terminals = terminals_rollout.numpy()
+    rewards = tf.squeeze(r_rollout).numpy()
+    terminals = tf.squeeze(terminals_rollout).numpy()
 
-    return targets, decoded_rollout_obs, rewards, terminals, chosen_predictor
+    return targets_obs, targets_r, targets_done, decoded_rollout_obs, rewards, terminals, chosen_predictor
 
 
 def rollout_videos(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor, video_title, store_animation=False):
@@ -298,3 +305,98 @@ def _debug_visualize_trajectory(trajs):
     weight_dummy = np.array([0 for _ in range(len(targets[0]))])[np.newaxis, ...]
     rewards = trajs[0]['r'][np.newaxis, ...]
     rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')
+
+
+class MultiYamlDataClassConfig(YamlDataClassConfig):
+
+    def load(self, file_paths: Union[Path, str, List[Path], List[str]] = None, path_is_absolute: bool = False):
+        """
+        This method loads from YAML file to properties of self instance.
+        Why doesn't load when __init__ is to make the following requirements compatible:
+        1. Access config as global
+        2. Independent on config for development or use config for unit testing when unit testing
+        """
+        if file_paths is None:
+            file_paths = self.FILE_PATH
+
+        if type(file_paths) is Path or type(file_paths) is str:
+            file_paths = [file_paths]
+
+        dict_config = {}
+        for file_path in file_paths:
+            dict_config.update(yaml.full_load(Path(file_path).read_text('UTF-8')))
+        self.__dict__.update(self.__class__.schema().load(dict_config).__dict__)
+
+
+@dataclass
+class ExperimentConfig(MultiYamlDataClassConfig):
+    tf_eager_mode: bool = None
+    model_summaries: bool = None
+    neptune_project_name: str = None
+
+    env_setting: str = None
+    env_n_samples_per_env: int = None
+    env_mix_memory_fraction: Union[float, List[float]] = None
+    env_sample_mem_path_stub: str = None
+    env_mix_mem_path_stub: str = None
+    env_name_concat: str = None
+
+    vae_n_train_steps: int = None
+    vae_n_steps_per_epoch: int = None
+    vae_batch_size: int = None
+    vae_commitment_cost: float = None
+    vae_n_embeddings: int = None
+    vae_d_embeddings: int = None
+    vae_frame_stack: int = None
+    vae_weights_path: str = None
+    vae_train_stats_path: str = None
+
+    pred_n_train_steps: int = None
+    pred_n_steps_per_epoch: int = None
+    pred_n_trajectories: int = None
+    pred_n_traj_steps: int = None
+    pred_n_warmup_steps: int = None
+    pred_pad_trajectories: bool = None
+    pred_det_filters: int = None
+    pred_prob_filters: int = None
+    pred_decider_lw: int = None
+    pred_n_models: int = None
+    pred_batch_size: int = None
+    pred_tb_log: bool = None
+    pred_weights_path: str = None
+    pred_train_stats_path: str = None
+
+    ctrl_n_runs: int = None
+    ctrl_n_plan_steps: int = None
+    ctrl_n_rollouts: int = None
+    ctrl_n_iterations: int = None
+    ctrl_top_perc: float = None
+    ctrl_gamma: float = None
+    ctrl_do_mpc: bool = None
+    ctrl_render: bool = None
+
+    #FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config_general.yml')
+
+
+def gen_sample_mem_paths(env_names):
+    return [CONFIG.env_sample_mem_path_stub + env_name for env_name in env_names]
+
+
+def gen_mix_mem_path(env_names):
+    return CONFIG.env_mix_mem_path_stub + CONFIG.env_name_concat.join(env_names)
+
+
+def gen_vae_weights_path(env_names):
+    return CONFIG.vae_weights_path + '_and_'.join(env_names)
+
+
+def gen_vae_train_stats_path(env_names):
+    return CONFIG.vae_train_stats_path + '_and_'.join(env_names)
+
+
+def gen_predictor_weights_path(env_names):
+    return CONFIG.pred_weights_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)
+
+
+def gen_predictor_train_stats_path(env_names):
+    return CONFIG.pred_train_stats_path + '_and_'.join(env_names) + '_' + str(CONFIG.pred_n_models)

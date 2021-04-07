@@ -1,6 +1,7 @@
 from replay_memory_tools import *
 from tools import *
 from project_init import *
+from tools import gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path
 
 if __name__ == '__main__':
     env_names, envs, env_info = gen_environments(CONFIG.env_setting)
@@ -34,24 +35,46 @@ if __name__ == '__main__':
                          summary=CONFIG.model_summaries)
     pred.load_weights(predictor_weights_path)
 
+    # some rollout videos
+    targets_obs, targets_r, targets_done, o_rollout, r_rollout, done_rollout, w_predictors = \
+        generate_test_rollouts(predictor=pred, mem=mix_memory, vae=vae, n_steps=200, n_warmup_steps=10, n_trajectories=4)
+    #rollout_videos(targets, o_rollout, r_rollout, done_rollout, w_predictors, 'Predictor Test')
 
-    targets, o_rollout, r_rollout, done_rollout, w_predictors = generate_test_rollouts(predictor=pred,
-                                                                                       mem=mix_memory,
-                                                                                       vae=vae,
-                                                                                       n_steps=200,
-                                                                                       n_warmup_steps=10,
-                                                                                       n_trajectories=4)
-    rollout_videos(targets, o_rollout, r_rollout, done_rollout, w_predictors, 'Predictor Test')
+    # more thorough rollouts
+    targets_obs, targets_r, targets_done, o_rollout, r_rollout, done_rollout, w_predictors =\
+        generate_test_rollouts(predictor=pred, mem=mix_memory, vae=vae, n_steps=5, n_warmup_steps=10, n_trajectories=1000)
+
+    print(np.nonzero(targets_r[:, 0] > 0.75))
+    print(np.nonzero(targets_r[:, 1] > 0.75))
+    print(np.nonzero(targets_r[:, 2] > 0.75))
+    print(np.nonzero(targets_r[:, 3] > 0.75))
+
+    plt.plot(np.mean(np.abs(targets_r - r_rollout), axis=0))
+    plt.show()
+
+    #terminal_reward_wrt_timestep = np.full((20,), -1, dtype=np.float32)
+    #terminals_wrt_timestep = np.zeros((20,))
+    #for r, done in zip(r_rollout, done_rollout):
+    #    if np.any(done):
+    #        t_terminal = np.argwhere(done == True)
+    #        terminal_reward_wrt_timestep[t_terminal] += r[t_terminal]
+    #        terminals_wrt_timestep[t_terminal] += 1
+    #terminal_reward_wrt_timestep /= terminals_wrt_timestep
+
+    #x_vals = [i for i, terminal_transition_seen in enumerate(terminals_wrt_timestep) if terminal_transition_seen > 0]
+
+    #plt.scatter(x_vals, terminal_reward_wrt_timestep[x_vals])
+    #plt.show()
 
     # rewards
     for i, r_traj in enumerate(r_rollout):
-        plt.plot(np.squeeze(r_traj), label=f'reward rollout {i}')
+        plt.plot(r_traj, label=f'reward rollout {i}')
     plt.legend()
     plt.show()
 
     # terminal probabilities
     for i, done_traj in enumerate(done_rollout):
-        plt.plot(np.squeeze(done_traj), label=f'terminal prob rollout {i}')
+        plt.plot(done_traj, label=f'terminal prob rollout {i}')
     plt.legend()
     plt.show()
 
@@ -60,8 +83,8 @@ if __name__ == '__main__':
     plt.show()
 
     # difference between predicted and true observations
-    pixel_diff_mean = np.mean(targets - o_rollout, axis=(0, 2, 3, 4))
-    pixel_diff_var = np.std(targets - o_rollout, axis=(0, 2, 3, 4))
+    pixel_diff_mean = np.mean(targets_obs - o_rollout, axis=(0, 2, 3, 4))
+    pixel_diff_var = np.std(targets_obs - o_rollout, axis=(0, 2, 3, 4))
     x = range(len(pixel_diff_mean))
     plt.plot(x, pixel_diff_mean)
     plt.fill_between(x, pixel_diff_mean - pixel_diff_var, pixel_diff_mean + pixel_diff_var, alpha=0.2)

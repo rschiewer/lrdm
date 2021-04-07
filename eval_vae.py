@@ -1,6 +1,7 @@
 from replay_memory_tools import *
 from tools import *
 from project_init import *
+from tools import gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path, gen_predictor_weights_path
 
 if __name__ == '__main__':
     env_names, envs, env_info = gen_environments(CONFIG.env_setting)

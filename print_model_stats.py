@@ -1,6 +1,6 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights
-from replay_memory_tools import load_env_samples, extract_subtrajectories
+from tools import gen_environments, vq_vae_net, predictor_net, gen_mix_mem_path
+from replay_memory_tools import load_env_samples
 import numpy as np
 
 

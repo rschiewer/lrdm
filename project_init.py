@@ -68,6 +68,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
 
     ctrl_n_runs: int = None
     ctrl_n_plan_steps: int = None
+    ctrl_n_warmup_steps: int = None
     ctrl_n_rollouts: int = None
     ctrl_n_iterations: int = None
     ctrl_top_perc: float = None

@@ -38,13 +38,13 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         #        processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
         #    else:
         #        processed_r_pred[i_traj] = r_pred[i_traj]
-        done_pred_prepend_dummy = tf.concat([tf.zeros((n_rollouts, 1), dtype=tf.float32), done_pred[:, :-1, 0]], axis=1)
+        done_mask = tf.concat([tf.zeros((n_rollouts, 1), dtype=tf.float32), done_pred[:, :-1, 0]], axis=1)
         discount_factors = tf.map_fn(
             lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma * (1 - elem), d_traj, initializer=1.0),
-            done_pred_prepend_dummy
+            done_mask
         )
 
-        discounted_returns = tf.reduce_sum(discount_factors * tf.squeeze(r_pred), axis=1)
+        discounted_returns = tf.reduce_sum(discount_factors * r_pred[:, :, 0], axis=1)
         #returns = tf.reduce_sum(processed_r_pred, axis=1)
 
         # discounted returns to prefer shorter trajectories
@@ -57,6 +57,7 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         top_a_sequence = tf.gather(a_in, top_i_a_sequence)
 
         print(f'Top returns are: {top_returns}')
+        print(f'Top first action: {top_a_sequence[0, 0, 0]}')
         #trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
 
         # MLE for categorical, see
@@ -125,12 +126,20 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
     return tf.cast(tf.round(tfp.distributions.MultivariateNormalDiag(loc=mean, scale_diag=scale).sample()), tf.int32)
 
 
-def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_iterations=5, top_perc=0.1, gamma=0.99,
-            do_mpc=True, render=False):
+def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5, top_perc=0.1,
+            gamma=0.99, do_mpc=True, render=False):
     last_observation = env.reset()
     t = 0
     r = 0
-    available_actions = []
+    available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
+    act_history = np.zeros((warmup_steps, env_info['n_actions']))
+    obs_history = np.zeros((warmup_steps, ))
+
+    for a in available_actions:
+        last_observation, _, _, _ = env.step(a)
+        env.render()
+
+    available_actions.clear()
 
     while True:
         if render:

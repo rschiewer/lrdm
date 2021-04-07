@@ -54,9 +54,8 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
         raise ValueError('No trajectories of length {} in memory found'.format(traj_length))
 
     if len(candidates) < num_trajectories and warn:
-        warnings.warn(
-            'The number of suitable trajectories in memory is smaller than the requested number of subtrajectories'.format(
-                traj_length))
+        warnings.warn((f'The number of suitable trajectories in memory is {len(traj_info)}, but the requested number '
+                       f'of subtrajectories is {num_trajectories}'))
 
     cand_iter = iter(candidates)
     subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
@@ -67,7 +66,7 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
         # traj_length + 1 in order to not miss last transition
         if random:
             if pad_short_trajectories:
-                i_sub_start = np.random.randint(i_ts, i_te)
+                i_sub_start = np.random.randint(i_ts, i_te + 1)
                 i_sub_end = min(i_te + 1, i_sub_start + traj_length)
             else:
                 i_sub_start = np.random.randint(i_ts, i_te - traj_length + 1)

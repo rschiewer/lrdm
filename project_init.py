@@ -70,7 +70,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     ctrl_n_plan_steps: int = None
     ctrl_n_rollouts: int = None
     ctrl_n_iterations: int = None
-    crtl_top_perc: float = None
+    ctrl_top_perc: float = None
     ctrl_gamma: float = None
     ctrl_do_mpc: bool = None
     ctrl_render: bool = None

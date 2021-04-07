@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Union, List
 
+import blockworld
 import gym
 import gym_minigrid
 import numpy as np

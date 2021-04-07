@@ -129,6 +129,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
             do_mpc=True, render=False):
     last_observation = env.reset()
     t = 0
+    r = 0
     available_actions = []
 
     while True:
@@ -147,10 +148,14 @@ def control(predictor, vae, env, env_info, plan_steps=50, n_rollouts=64, n_itera
         print(f'action: {act_names[action]}')
         observation, reward, done, info = env.step(action)
 
+        reward += r
+        t += 1
+
         if done:
             break
         else:
             last_observation = observation
-        t += 1
     print(f'Environment solved within {t} steps.')
     env.close()
+
+    return r, t

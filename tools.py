@@ -328,8 +328,11 @@ class ValueHistory:
         if len(self._data) > self._max_len:
             self._data.pop(0)
 
-    def full_history(self):
+    def to_list(self):
         return self._data
+
+    def to_numpy(self):
+        return np.array(self._data)
 
     def clear(self):
         self._data.clear()

@@ -8,15 +8,18 @@ from replay_memory_tools import cast_and_normalize_images
 from tools import ValueHistory
 
 
-def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
+def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
     and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
     """
     # add axis for batch dim when encoding
-    encoded_start_sample = vae.encode_to_indices(start_sample[tf.newaxis, ...])
-    # add axis for time, then repeat n_rollouts times along batch dimension
-    o_in = tf.repeat(encoded_start_sample[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
+    preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
+    preprocessed_start_samples = vae.encode_to_indices(preprocessed_start_samples)
+    preprocessed_start_actions = tf.cast(act_history.to_numpy(), tf.int32)
+    # add axis for batch, then repeat n_rollouts times along batch dimension
+    o_hist = tf.repeat(preprocessed_start_samples[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
+    a_hist = tf.repeat(preprocessed_start_actions[tf.newaxis, :, tf.newaxis], repeats=[n_rollouts], axis=0)
     # initial params for sampling distribution
     dist_params = tf.ones((plan_steps, n_actions), dtype=tf.float32) / n_actions
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
@@ -26,10 +29,10 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
     for i_iter in range(n_iterations):
         # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
         # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
-        a_in = tfp.distributions.Categorical(probs=dist_params).sample(n_rollouts)
-        a_in = tf.expand_dims(a_in, axis=-1)
+        a_new = tfp.distributions.Categorical(probs=dist_params).sample(n_rollouts)[..., tf.newaxis]
+        a_in = tf.concat([a_hist, a_new], axis=1)
 
-        o_pred, r_pred, done_pred, pred_weights = predictor([o_in, a_in])
+        o_pred, r_pred, done_pred, pred_weights = predictor([o_hist, a_in])
 
         # make sure trajectory ends after reward was collected once
         #processed_r_pred = np.zeros_like(r_pred)
@@ -55,7 +58,7 @@ def plan(predictor, vae, start_sample, n_actions, plan_steps, n_rollouts, n_iter
         #)
 
         top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
-        top_a_sequence = tf.gather(a_in, top_i_a_sequence)
+        top_a_sequence = tf.gather(a_new, top_i_a_sequence)
 
         print(f'Top returns are: {top_returns}')
         print(f'Top first action: {top_a_sequence[0, 0, 0]}')
@@ -129,22 +132,22 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
 
 def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5, top_perc=0.1,
             gamma=0.99, do_mpc=True, render=False):
-    act_history = ValueHistory((1,), warmup_steps - 1)
+    act_history = ValueHistory((), warmup_steps - 1)
     obs_history = ValueHistory(env_info['obs_shape'], warmup_steps)
-    available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
+    #available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
+    available_actions = []
     t = 0
     r = 0
 
     last_observation = env.reset()
     obs_history.append(last_observation)
 
-    for a in available_actions:
-        last_observation, _, _, _ = env.step(a)
-        act_history.append(a)
-        obs_history.append(last_observation)
-        env.render()
-
-    available_actions.clear()
+    #for a in available_actions:
+    #    last_observation, _, _, _ = env.step(a)
+    #    act_history.append(a)
+    #    obs_history.append(last_observation)
+    #    env.render()
+    #available_actions.clear()
 
     while True:
         if render:
@@ -152,7 +155,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
 
         if len(available_actions) == 0:
             obs_preprocessed = cast_and_normalize_images(last_observation)
-            actions = plan(predictor, vae, obs_preprocessed, env_info['n_actions'], plan_steps, n_rollouts,
+            actions = plan(predictor, vae, obs_history, act_history, env_info['n_actions'], plan_steps, n_rollouts,
                            n_iterations, top_perc, gamma)
             available_actions.extend([a for a in actions.numpy()])
         action = available_actions.pop(0)
@@ -167,10 +170,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
         t += 1
 
         act_history.append(action)
-        if len(act_history) > warmup_steps - 1:
-            act_history.pop(0)
         obs_history.append(observation)
-        if len(obs_history) > warmup_steps:
 
         if done:
             break

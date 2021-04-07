@@ -2,6 +2,7 @@ from replay_memory_tools import *
 from tools import *
 from project_init import *
 from control import control
+import neptune.new as neptune
 
 if __name__ == '__main__':
     env_names, envs, env_info = gen_environments(CONFIG.env_setting)
@@ -35,9 +36,20 @@ if __name__ == '__main__':
                          summary=CONFIG.model_summaries)
     pred.load_weights(predictor_weights_path)
 
-    control(predictor=pred,
-            vae=vae,
-            env=envs[1],
-            env_info=env_info,
-            plan_steps=70, n_rollouts=150, n_iterations=3, top_perc=0.1, gamma=0.95, do_mpc=True, render=False)
+    if CONFIG.neptune_project_name:
+        run = neptune.init(project=CONFIG.neptune_project_name)
+        run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('ctrl_')}
+        run['sys/tags'].add('control')
+    else:
+        run = None
+
+    for i_run in range(CONFIG.ctrl_n_runs):
+        for name, env in zip(env_names, envs):
+            r, t = control(predictor=pred, vae=vae, env=env, env_info=env_info, plan_steps=CONFIG.ctrl_n_plan_steps,
+                           n_rollouts=CONFIG.ctrl_n_plan_steps, n_iterations=CONFIG.ctrl_n_iterations,
+                           top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma, do_mpc=CONFIG.ctrl_do_mpc,
+                           render=CONFIG.ctrl_render)
+            if run:
+                run[f'{env}/rewards'].log(r)
+                run[f'{env}/steps'].log(t)
 

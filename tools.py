@@ -412,6 +412,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     ctrl_top_perc: float = None
     ctrl_gamma: float = None
     ctrl_do_mpc: bool = None
+    ctrl_max_steps: int = None
     ctrl_render: bool = None
 
     #FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config_general.yml')

@@ -1,9 +1,10 @@
 ctrl_n_runs: 20
 ctrl_n_plan_steps: 100
 ctrl_n_warmup_steps: 4
-ctrl_n_rollouts: 200
+ctrl_n_rollouts: 256
 ctrl_n_iterations: 10
 ctrl_top_perc: 0.15
 ctrl_gamma: 0.98
 ctrl_do_mpc: True
+ctrl_max_steps: 50
 ctrl_render: False

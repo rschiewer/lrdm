@@ -136,7 +136,7 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
 
 
 def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5, top_perc=0.1,
-            gamma=0.99, do_mpc=True, render=False):
+            gamma=0.99, do_mpc=True, max_steps=100, render=False):
     act_history = ValueHistory((), warmup_steps - 1)
     obs_history = ValueHistory(env_info['obs_shape'], warmup_steps)
     #available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
@@ -144,8 +144,9 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
     t = 0
     r = 0
 
-    last_observation = env.reset()
-    obs_history.append(last_observation)
+    #last_observation = env.reset()
+    #obs_history.append(last_observation)
+    obs_history.append(env.reset())
 
     #for a in available_actions:
     #    last_observation, _, _, _ = env.step(a)
@@ -158,30 +159,36 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
         if render:
             env.render()
 
+        # propose new actions of none present
         if len(available_actions) == 0:
-            obs_preprocessed = cast_and_normalize_images(last_observation)
             actions = plan(predictor, vae, obs_history, act_history, env_info['n_actions'], plan_steps, n_rollouts,
                            n_iterations, top_perc, gamma)
             available_actions.extend([a for a in actions.numpy()])
+
+        # pick first one and trash the rest if we do MPC
         action = available_actions.pop(0)
         if do_mpc:
             available_actions.clear()
 
-        act_names = ['up', 'right', 'down', 'left', 'noop']
-        print(f'action: {act_names[action]}')
+        #act_names = ['up', 'right', 'down', 'left', 'noop']
+        #print(f'action: {act_names[action]}')
         observation, reward, done, info = env.step(action)
 
-        reward += r
+        # bookkeeping
+        r += reward
         t += 1
-
         act_history.append(action)
         obs_history.append(observation)
 
         if done:
+            print(f'Environment solved within {t} steps.')
             break
-        else:
-            last_observation = observation
-    print(f'Environment solved within {t} steps.')
+        #else:
+        #    last_observation = observation
+        if t == max_steps:
+            print(f'FAILED to solve environment within {t} steps.')
+            break
+
     env.close()
 
     return r, t

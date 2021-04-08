@@ -51,8 +51,8 @@ if __name__ == '__main__':
                            warmup_steps=CONFIG.ctrl_n_warmup_steps,
                            n_rollouts=CONFIG.ctrl_n_rollouts, n_iterations=CONFIG.ctrl_n_iterations,
                            top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma, do_mpc=CONFIG.ctrl_do_mpc,
-                           render=CONFIG.ctrl_render)
+                           max_steps=CONFIG.ctrl_max_steps, render=CONFIG.ctrl_render)
             if run:
-                run[f'{env}/rewards'].log(r)
-                run[f'{env}/steps'].log(t)
+                run[f'{name}/rewards'].log(r)
+                run[f'{name}/steps'].log(t)
 

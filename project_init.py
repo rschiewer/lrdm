@@ -13,8 +13,6 @@ from tools import ExperimentConfig
 #            p.mkdir()
 
 
-
-
 # Global options and settings ------------------------------------------------------------------------------------------
 
 

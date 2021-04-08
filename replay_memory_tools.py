@@ -291,7 +291,7 @@ def unstack_observations(obs, n_stack):
     return np.array(unstacked, dtype=np.float32)
 
 
-def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=None, max_cols=4):
+def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=None, max_cols=4, interval=50):
     assert np.ndim(obs) >= 4, ('Please provide at least one trajectory with shape (timestep, with, height, channels), ',
                                f'I got a nested structure with shape {np.shape(obs)} instead.')
     if np.ndim(obs) == 4:
@@ -325,7 +325,7 @@ def trajectory_video(obs, titles, max_len=np.iinfo(np.int32).max, overall_title=
             tmp_artists.append(ax.imshow(traj[i], animated=True))
         to_plot.append(tmp_artists)
 
-    anim = animation.ArtistAnimation(fig, to_plot, interval=50, blit=True, repeat_delay=1000)
+    anim = animation.ArtistAnimation(fig, to_plot, interval=interval, blit=True, repeat_delay=1000)
     plt.show()
 
     return anim

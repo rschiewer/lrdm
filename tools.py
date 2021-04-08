@@ -212,7 +212,7 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
             # do prediction
             obs = cast_and_normalize_images(obs[np.newaxis, np.newaxis, ...])
             encoded_obs = vae.encode_to_indices(obs)
-            o_predicted, r_predicted, w_predictors = predictor.predict([encoded_obs, a])
+            o_predicted, r_predicted, done_predicted, w_predictors = predictor.predict([encoded_obs, a])
             most_probable = np.argmax(w_predictors)
             if np.size(w_predictors) == 1:
                 pred_entropy = 0
@@ -245,6 +245,8 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
     plt.colorbar(im_1, cax=cax_1)
 
     plt.show()
+
+    return fig
 
 
 def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories):

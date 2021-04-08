@@ -13,6 +13,11 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
     and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
     """
+
+    #from tools import debug_visualize_observation_sequence
+    #debug_visualize_observation_sequence(obs_history.to_numpy(), interval=250)
+    #print(act_history.to_list())
+
     # add axis for batch dim when encoding
     preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
     preprocessed_start_samples = vae.encode_to_indices(preprocessed_start_samples)

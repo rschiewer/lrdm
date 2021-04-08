@@ -298,12 +298,19 @@ def rollout_videos(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predic
         anim.save('rollout.mp4', writer=writer)
 
 
-def _debug_visualize_trajectory(trajs):
+def debug_visualize_observation_sequence(obs, interval=50):
+    # clip and add batch axis
+    obs = np.clip(obs, 0, 255)[np.newaxis, ...]
+    anim = trajectory_video(obs, ['Debug'], max_cols=1, interval=interval)
+
+
+def debug_visualize_trajectory(trajs):
     targets = trajs[0]['s'][np.newaxis, ...]
     o_rollout_dummy = trajs[0]['s'][np.newaxis, ...]
     weight_dummy = np.array([0 for _ in range(len(targets[0]))])[np.newaxis, ...]
     rewards = trajs[0]['r'][np.newaxis, ...]
-    rollout_videos(targets, o_rollout_dummy, rewards, weight_dummy, 'Debug')
+    dones = trajs[0]['done'][np.newaxis, ...]
+    rollout_videos(targets, o_rollout_dummy, rewards, dones, weight_dummy, 'Debug')
 
 
 class ValueHistory:

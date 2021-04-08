@@ -3,6 +3,7 @@ from tools import *
 from project_init import *
 from control import control
 import neptune.new as neptune
+import gc
 
 from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path
 
@@ -52,6 +53,10 @@ if __name__ == '__main__':
                            n_rollouts=CONFIG.ctrl_n_rollouts, n_iterations=CONFIG.ctrl_n_iterations,
                            top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma, do_mpc=CONFIG.ctrl_do_mpc,
                            max_steps=CONFIG.ctrl_max_steps, render=CONFIG.ctrl_render)
+
+            tf.keras.backend.clear_session()
+            gc.collect()
+
             if run:
                 run[f'{name}/rewards'].log(r)
                 run[f'{name}/steps'].log(t)

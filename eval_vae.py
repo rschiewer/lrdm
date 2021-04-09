@@ -2,6 +2,7 @@ from replay_memory_tools import *
 from tools import *
 from project_init import *
 from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path, gen_predictor_weights_path
+from sklearn.manifold import TSNE
 
 if __name__ == '__main__':
     env_names, envs, env_info = gen_environments(CONFIG.env_setting)
@@ -25,4 +26,15 @@ if __name__ == '__main__':
 
     load_vae_weights(vae=vae, weights_path=vae_weights_path, train_stats_path=vae_train_stats_path,
                      plot_training=True, test_memory=mix_memory)
+
+    batch_size = 32
+    obs_datset = (tf.data.Dataset.from_tensor_slices(mix_memory[::10]['s'])
+                  .map(cast_and_normalize_images)
+                  .batch(batch_size, drop_remainder=False)
+                  .prefetch(-1))
+    encoded_obs = vae.encode_to_indices(obs_datset)
+
+    embedded = TSNE(n_components=2).fit_transform(encoded_obs)
+    plt.scatter(embedded[:, 0], embedded[:, 1])
+
 

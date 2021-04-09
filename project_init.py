@@ -29,7 +29,7 @@ if gpus:
 
 
 CONFIG = ExperimentConfig()
-CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_1_mdl.yml', 'config_vae.yml'])
+CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_3_mdl.yml', 'config_vae.yml'])
 
 
 def gen_sample_mem_paths(env_names):

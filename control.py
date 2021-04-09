@@ -65,8 +65,8 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
         top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
         top_a_sequence = tf.gather(a_new, top_i_a_sequence)
 
-        print(f'Top returns are: {top_returns}')
-        print(f'Top first action: {top_a_sequence[0, 0, 0]}')
+        #print(f'Top returns are: {top_returns}')
+        #print(f'Top first action: {top_a_sequence[0, 0, 0]}')
         #trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
 
         # MLE for categorical, see
@@ -78,7 +78,7 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
         denominator = tf.reduce_sum(top_a_sequence_onehot, axis=[0, 2])[..., tf.newaxis]
         dist_params = numerator / denominator
 
-    print(f'Final action probabilities: {dist_params[0]}')
+    #print(f'Final action probabilities: {dist_params[0]}')
     return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
 
 
@@ -170,8 +170,8 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
         if do_mpc:
             available_actions.clear()
 
-        #act_names = ['up', 'right', 'down', 'left', 'noop']
-        #print(f'action: {act_names[action]}')
+        act_names = ['up', 'right', 'down', 'left', 'noop']
+        print(f'action: {act_names[action]}')
         observation, reward, done, info = env.step(action)
 
         # bookkeeping

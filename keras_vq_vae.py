@@ -466,8 +466,15 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         return index_mat.get_shape()[1:]
 
     def encode_to_vectors(self, inputs):
-        z = self._pre_vq_conv1(self._encoder(inputs))
-        vq_output = self._vqvae.encode_to_embedding_vectors(z)
+        if isinstance(inputs, tf.data.Dataset):
+            z_list = []
+            for batch in inputs:
+                z = self._pre_vq_conv1(self._encoder(batch))
+                z_list.append(self._vqvae.encode_to_embedding_vectors(z))
+            vq_output = tf.concat(z_list, axis=0)
+        else:
+            z = self._pre_vq_conv1(self._encoder(inputs))
+            vq_output = self._vqvae.encode_to_embedding_vectors(z)
         return vq_output
 
     def encode_to_indices(self, inputs):

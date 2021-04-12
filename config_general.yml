@@ -1,4 +1,4 @@
-tf_eager_mode: False
+tf_eager_mode: True
 model_summaries: False
 neptune_project_name: 'rschiewer/predictor'
 

@@ -85,24 +85,24 @@ if __name__ == '__main__':
 
     # all_predictor.load_weights('predictors/' + predictor_weights_path)
     epochs = np.ceil(CONFIG.pred_n_train_steps / CONFIG.pred_n_steps_per_epoch).astype(np.int32)
-    #history = pred.fit(dataset,
-    #                   epochs=epochs,
-    #                   steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
-    #                   verbose=1,
-    #                   callbacks=callbacks)
+    history = pred.fit(dataset,
+                       epochs=epochs,
+                       steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
+                       verbose=1,
+                       callbacks=callbacks)
 
     # custom train loop because of memory leak in train_step, try to fix in the future
-    dset_iter = iter(dataset)
-    for epoch in range(epochs):
-        for step in range(CONFIG.pred_n_steps_per_epoch):
-            batch = next(dset_iter)
-            loss_stats = pred.train_step(batch)
-            train_str = f'{epoch + 1}/{epochs}: '
-            for k, v in loss_stats.items():
-                train_str += f'{k}: {v:3.5f}\t'
-                if run:
-                    run[k].log(v)
-            print(train_str)
+    #dset_iter = iter(dataset)
+    #for epoch in range(epochs):
+    #    for step in range(CONFIG.pred_n_steps_per_epoch):
+    #        batch = next(dset_iter)
+    #        loss_stats = pred.train_step(batch)
+    #        train_str = f'{epoch + 1}/{epochs}: '
+    #        for k, v in loss_stats.items():
+    #            train_str += f'{k}: {v:3.5f}\t'
+    #            if run:
+    #                run[k].log(v)
+    #        print(train_str)
 
 
 

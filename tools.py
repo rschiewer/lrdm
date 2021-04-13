@@ -71,7 +71,7 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        open_loop_rollout_training=True,
                                        det_filters=det_filters,
                                        prob_filters=prob_filters,
-                                       decider_lw=decider_lw,
+                                       decider_filters=decider_lw,
                                        n_models=n_models, debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
 
@@ -202,7 +202,7 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
     plot_val = np.full((env_sizes[i_env][1], env_sizes[i_env][3]), -1, dtype=np.float32)
     plot_val_var = plot_val.copy()
     action_names_after_rotation = ['right', 'down', 'left', 'up']
-    a = np.full((1, 1, 1), 0)
+    a = np.full((1, 1, 1), 1)
     for x in range(env_sizes[i_env][1]):
         for y in range(env_sizes[i_env][3]):
             obs = gallery[i_env][x][y]
@@ -217,7 +217,7 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
             if np.size(w_predictors) == 1:
                 pred_entropy = 0
             else:
-                pred_entropy = - sum([np.log(w) * w for w in np.squeeze(w_predictors)])
+                pred_entropy = - sum([np.log(w + 1E-5) * w if w > 0 else 0 for w in np.squeeze(w_predictors)])
 
             # store
             plot_val[x, y] = most_probable

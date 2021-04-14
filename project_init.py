@@ -15,7 +15,6 @@ from tools import ExperimentConfig
 
 # Global options and settings ------------------------------------------------------------------------------------------
 
-
 # see https://www.tensorflow.org/guide/gpu
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -29,7 +28,10 @@ if gpus:
 
 
 CONFIG = ExperimentConfig()
-CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_3_mdl.yml', 'config_vae.yml'])
+CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_4_mdl.yml', 'config_vae.yml'])
+
+
+tf.config.run_functions_eagerly(CONFIG.tf_eager_mode)
 
 
 def gen_sample_mem_paths(env_names):

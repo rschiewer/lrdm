@@ -90,12 +90,14 @@ if __name__ == '__main__':
             run['avg_terminal_error'].log(ad)
 
     # predictor choice
+    fig = plt.figure()
     plt.hist(np.array(w_predictors).flatten())
     plt.show()
     if run:
-        run['Predictor choice'] = neptune.types.File.as_image(plt.gcf())
+        run['Predictor choice'] = neptune.types.File.as_image(fig)
 
     # difference between predicted and true observations
+    fig = plt.figure()
     pixel_diff_mean = np.mean(targets_obs - o_rollout, axis=(0, 2, 3, 4))
     pixel_diff_var = np.std(targets_obs - o_rollout, axis=(0, 2, 3, 4))
     x = range(len(pixel_diff_mean))
@@ -105,4 +107,4 @@ if __name__ == '__main__':
     if run:
         for ad in pixel_diff_mean:
             run['avg_obs_error'].log(ad)
-        run['Observation deviation vs groundtruth'] = neptune.types.File.as_image(plt.gcf())
+        run['Observation deviation vs groundtruth'] = neptune.types.File.as_image(fig)

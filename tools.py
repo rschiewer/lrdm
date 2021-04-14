@@ -14,6 +14,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
+from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
     unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
 
@@ -21,6 +22,13 @@ from replay_memory_tools import cast_and_normalize_images, extract_subtrajectori
 def gen_environments(test_setting):
     if test_setting == 'gridworld_3_rooms':
         env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
+        environments = [gym.make(env_name) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'gridworld_2_modular_rooms':
+        env_names = ['Gridworld-partial-room-v3','Gridworld-partial-room-v4']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
@@ -71,7 +79,7 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        open_loop_rollout_training=True,
                                        det_filters=det_filters,
                                        prob_filters=prob_filters,
-                                       decider_lw=decider_lw,
+                                       decider_filters=decider_lw,
                                        n_models=n_models, debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
 
@@ -202,7 +210,7 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
     plot_val = np.full((env_sizes[i_env][1], env_sizes[i_env][3]), -1, dtype=np.float32)
     plot_val_var = plot_val.copy()
     action_names_after_rotation = ['right', 'down', 'left', 'up']
-    a = np.full((1, 1, 1), 0)
+    a = np.full((1, 1, 1), 1)
     for x in range(env_sizes[i_env][1]):
         for y in range(env_sizes[i_env][3]):
             obs = gallery[i_env][x][y]
@@ -217,7 +225,7 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
             if np.size(w_predictors) == 1:
                 pred_entropy = 0
             else:
-                pred_entropy = - sum([np.log(w) * w for w in np.squeeze(w_predictors)])
+                pred_entropy = - sum([np.log(w + 1E-5) * w if w > 0 else 0 for w in np.squeeze(w_predictors)])
 
             # store
             plot_val[x, y] = most_probable
@@ -345,6 +353,12 @@ class ValueHistory:
 
     def clear(self):
         self._data.clear()
+
+
+class NeptuneEpochCallback(NeptuneCallback):
+
+    def on_batch_end(self, batch, logs=None):
+        pass
 
 
 class MultiYamlDataClassConfig(YamlDataClassConfig):

@@ -14,6 +14,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
+from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
     unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
 
@@ -21,6 +22,13 @@ from replay_memory_tools import cast_and_normalize_images, extract_subtrajectori
 def gen_environments(test_setting):
     if test_setting == 'gridworld_3_rooms':
         env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
+        environments = [gym.make(env_name) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'gridworld_2_modular_rooms':
+        env_names = ['Gridworld-partial-room-v3','Gridworld-partial-room-v4']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
@@ -345,6 +353,12 @@ class ValueHistory:
 
     def clear(self):
         self._data.clear()
+
+
+class NeptuneEpochCallback(NeptuneCallback):
+
+    def on_batch_end(self, batch, logs=None):
+        pass
 
 
 class MultiYamlDataClassConfig(YamlDataClassConfig):

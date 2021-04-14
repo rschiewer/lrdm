@@ -1,5 +1,5 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net
+from tools import gen_environments, vq_vae_net, NeptuneEpochCallback
 from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_vae_train_stats_path
 from replay_memory_tools import load_env_samples, line_up_observations,\
     stack_observations, cast_and_normalize_images
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     callbacks = []
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
-        neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
+        neptune_cbk = NeptuneEpochCallback(run=run, base_namespace='metrics')
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('vae_')}
         run['sys/tags'].add('vqvae')
         callbacks.append(neptune_cbk)

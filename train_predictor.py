@@ -77,13 +77,13 @@ if __name__ == '__main__':
     else:
         run = None
 
-    class MyCustomCallback(tf.keras.callbacks.Callback):
-        def on_epoch_end(self, epoch, logs=None):
-            gc.collect()
-            tf.keras.backend.clear_session()
-    callbacks.append(MyCustomCallback())
+    #class MyCustomCallback(tf.keras.callbacks.Callback):
+    #    def on_epoch_end(self, epoch, logs=None):
+    #        gc.collect()
+    #        tf.keras.backend.clear_session()
+    #callbacks.append(MyCustomCallback())
 
-    # all_predictor.load_weights('predictors/' + predictor_weights_path)
+    pred.load_weights(predictor_weights_path)
     epochs = np.ceil(CONFIG.pred_n_train_steps / CONFIG.pred_n_steps_per_epoch).astype(np.int32)
     history = pred.fit(dataset,
                        epochs=epochs,
@@ -103,8 +103,6 @@ if __name__ == '__main__':
     #            if run:
     #                run[k].log(v)
     #        print(train_str)
-
-
 
     pred.save_weights(predictor_weights_path)
     #with open(predictor_train_stats_path, 'wb') as handle:

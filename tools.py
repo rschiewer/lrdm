@@ -399,6 +399,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     vae_n_steps_per_epoch: int = None
     vae_batch_size: int = None
     vae_commitment_cost: float = None
+    vae_decay: float = None
     vae_n_embeddings: int = None
     vae_d_embeddings: int = None
     vae_frame_stack: int = None

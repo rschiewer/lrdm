@@ -148,7 +148,7 @@ def _run_env(env, n_samples, idx):
 
             if 'player_pos' in info.keys():
                 player_pos = info.pop('player_pos', None)
-            elif env.agent_pos is not None:
+            elif hasattr(env, 'agent_pos') and env.agent_pos is not None:
                 player_pos = env.agent_pos
             else:
                 player_pos = [-42, -42]

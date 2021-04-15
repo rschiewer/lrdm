@@ -25,11 +25,12 @@ from gym import spaces
 from gym import ObservationWrapper
 
 
-class PixelObservationWrapper(ObservationWrapper):
+class FixedSizePixelObs(ObservationWrapper):
     """Augment observations by pixel values."""
 
     def __init__(self,
                  env,
+                 obs_shape=None,
                  pixels_only=True,
                  render_kwargs=None,
                  pixel_keys=('pixels', )):
@@ -54,7 +55,7 @@ class PixelObservationWrapper(ObservationWrapper):
                 specified `pixel_keys`.
         """
 
-        super(PixelObservationWrapper, self).__init__(env)
+        super(FixedSizePixelObs, self).__init__(env)
 
         if render_kwargs is None:
             render_kwargs = {}
@@ -70,7 +71,7 @@ class PixelObservationWrapper(ObservationWrapper):
 
         if isinstance(wrapped_observation_space, spaces.Box):
             self._observation_is_dict = False
-            invalid_keys = set([STATE_KEY])
+            invalid_keys = set('state')
         elif isinstance(wrapped_observation_space,
                         (spaces.Dict, MutableMapping)):
             self._observation_is_dict = True
@@ -92,13 +93,15 @@ class PixelObservationWrapper(ObservationWrapper):
             self.observation_space = copy.deepcopy(wrapped_observation_space)
         else:
             self.observation_space = spaces.Dict()
-            self.observation_space.spaces[STATE_KEY] = wrapped_observation_space
+            self.observation_space.spaces['state'] = wrapped_observation_space
 
         # Extend observation space with pixels.
 
         pixels_spaces = {}
         for pixel_key in pixel_keys:
+            self.env.reset()
             pixels = self.env.render(**render_kwargs[pixel_key])
+            self.env.close()
 
             if np.issubdtype(pixels.dtype, np.integer):
                 low, high = (0, 255)
@@ -107,8 +110,8 @@ class PixelObservationWrapper(ObservationWrapper):
             else:
                 raise TypeError(pixels.dtype)
 
-            pixels_space = spaces.Box(
-                shape=pixels.shape, low=low, high=high, dtype=pixels.dtype)
+            new_shape = (64, 64, 3)
+            pixels_space = spaces.Box(shape=new_shape, low=low, high=high, dtype=pixels.dtype)
             pixels_spaces[pixel_key] = pixels_space
 
         self.observation_space.spaces.update(pixels_spaces)
@@ -123,18 +126,20 @@ class PixelObservationWrapper(ObservationWrapper):
         return pixel_observation
 
     def _add_pixel_observation(self, wrapped_observation):
+        import cv2
         if self._pixels_only:
             observation = collections.OrderedDict()
         elif self._observation_is_dict:
             observation = type(wrapped_observation)(wrapped_observation)
         else:
             observation = collections.OrderedDict()
-            observation[STATE_KEY] = wrapped_observation
+            observation['state'] = wrapped_observation
 
-        pixel_observations = {
-            pixel_key: self.env.render(**self._render_kwargs[pixel_key])
-            for pixel_key in self._pixel_keys
-        }
+        pixel_observations = {}
+        for key in self._pixel_keys:
+            obs = self.env.render(**self._render_kwargs[key]).astype(np.float32)
+            obs_resized = cv2.resize(obs, (64, 64), interpolation=cv2.INTER_AREA).astype(np.int8)
+            pixel_observations[key] = obs_resized
 
         observation.update(pixel_observations)
 
@@ -165,10 +170,10 @@ def gen_environments(test_setting):
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
     elif test_setting == 'gym_classics':
-        env_names = ['CartPole-v0', 'LunarLander-v0', 'MountainCar-v0']
-        environments = [PixelObservationWrapper(gym.make(env_name)) for env_name in env_names]
-        obs_shape = environments[0].observation_space.shape
-        obs_dtype = environments[0].observation_space.dtype
+        env_names = ['CartPole-v0', 'LunarLander-v2', 'BipedalWalker-v3']
+        environments = [gym.wrappers.TransformObservation(FixedSizePixelObs(gym.make(env_name)), lambda obs: obs['pixels']) for env_name in env_names]
+        obs_shape = environments[0].observation_space['pixels'].shape
+        obs_dtype = environments[0].observation_space['pixels'].dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
     elif test_setting == 'new_gridworld':
@@ -493,7 +498,6 @@ class NeptuneEpochCallback(NeptuneCallback):
 """An observation wrapper that augments observations by pixel values."""
 
 
-STATE_KEY = 'state'
 
 
 

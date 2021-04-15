@@ -27,8 +27,8 @@ def gen_environments(test_setting):
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
-    elif test_setting == 'gridworld_2_modular_rooms':
-        env_names = ['Gridworld-partial-room-v3','Gridworld-partial-room-v4']
+    elif test_setting == 'gridworld_doors_teleporters':
+        env_names = ['Gridworld-partial-room-v5']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype

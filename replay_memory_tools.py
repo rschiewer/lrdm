@@ -151,7 +151,7 @@ def _run_env(env, n_samples, idx):
             elif hasattr(env, 'agent_pos') and env.agent_pos is not None:
                 player_pos = env.agent_pos
             else:
-                player_pos = [-42, -42]
+                player_pos = (-42, -42)
 
             memory.append((last_observation, action, reward, observation, done, player_pos, idx))
 
@@ -174,7 +174,8 @@ def _run_env(env, n_samples, idx):
 def gen_data(envs, env_info, samples_per_env, file_paths=None):
     obs_shape = env_info['obs_shape']
     obs_dtype = env_info['obs_dtype']
-    assert type(envs[0].action_space) is gym.spaces.Discrete
+    for env in envs:
+        assert type(env.action_space) is gym.spaces.Discrete, f'Environment {env} doesn\'t have discrete action space'
 
     memories = []
 
@@ -191,6 +192,8 @@ def gen_data(envs, env_info, samples_per_env, file_paths=None):
                           ('pos', np.float32, (2,)),
                           ('env', np.int8, ())])
 
+    for mem in memories:
+        np.array(mem, dtype=arr_dtype)
     memories = [np.array(mem, dtype=arr_dtype) for mem in memories]
 
     if file_paths:

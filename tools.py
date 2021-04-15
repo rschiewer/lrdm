@@ -402,6 +402,9 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     vae_decay: float = None
     vae_n_embeddings: int = None
     vae_d_embeddings: int = None
+    vae_n_hiddens: int = None
+    vae_n_residual_hiddens: int = None
+    vae_n_residual_layers: int = None
     vae_frame_stack: int = None
     vae_weights_path: str = None
     vae_train_stats_path: str = None

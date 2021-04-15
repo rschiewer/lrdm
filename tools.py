@@ -18,6 +18,128 @@ from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
     unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
 
+import collections
+from collections.abc import MutableMapping
+import copy
+from gym import spaces
+from gym import ObservationWrapper
+
+
+class PixelObservationWrapper(ObservationWrapper):
+    """Augment observations by pixel values."""
+
+    def __init__(self,
+                 env,
+                 pixels_only=True,
+                 render_kwargs=None,
+                 pixel_keys=('pixels', )):
+        """Initializes a new pixel Wrapper.
+        Args:
+            env: The environment to wrap.
+            pixels_only: If `True` (default), the original observation returned
+                by the wrapped environment will be discarded, and a dictionary
+                observation will only include pixels. If `False`, the
+                observation dictionary will contain both the original
+                observations and the pixel observations.
+            render_kwargs: Optional `dict` containing keyword arguments passed
+                to the `self.render` method.
+            pixel_keys: Optional custom string specifying the pixel
+                observation's key in the `OrderedDict` of observations.
+                Defaults to 'pixels'.
+        Raises:
+            ValueError: If `env`'s observation spec is not compatible with the
+                wrapper. Supported formats are a single array, or a dict of
+                arrays.
+            ValueError: If `env`'s observation already contains any of the
+                specified `pixel_keys`.
+        """
+
+        super(PixelObservationWrapper, self).__init__(env)
+
+        if render_kwargs is None:
+            render_kwargs = {}
+
+        for key in pixel_keys:
+            render_kwargs.setdefault(key, {})
+
+            render_mode = render_kwargs[key].pop('mode', 'rgb_array')
+            assert render_mode == 'rgb_array', render_mode
+            render_kwargs[key]['mode'] = 'rgb_array'
+
+        wrapped_observation_space = env.observation_space
+
+        if isinstance(wrapped_observation_space, spaces.Box):
+            self._observation_is_dict = False
+            invalid_keys = set([STATE_KEY])
+        elif isinstance(wrapped_observation_space,
+                        (spaces.Dict, MutableMapping)):
+            self._observation_is_dict = True
+            invalid_keys = set(wrapped_observation_space.spaces.keys())
+        else:
+            raise ValueError("Unsupported observation space structure.")
+
+        if not pixels_only:
+            # Make sure that now keys in the `pixel_keys` overlap with
+            # `observation_keys`
+            overlapping_keys = set(pixel_keys) & set(invalid_keys)
+            if overlapping_keys:
+                raise ValueError("Duplicate or reserved pixel keys {!r}."
+                                 .format(overlapping_keys))
+
+        if pixels_only:
+            self.observation_space = spaces.Dict()
+        elif self._observation_is_dict:
+            self.observation_space = copy.deepcopy(wrapped_observation_space)
+        else:
+            self.observation_space = spaces.Dict()
+            self.observation_space.spaces[STATE_KEY] = wrapped_observation_space
+
+        # Extend observation space with pixels.
+
+        pixels_spaces = {}
+        for pixel_key in pixel_keys:
+            pixels = self.env.render(**render_kwargs[pixel_key])
+
+            if np.issubdtype(pixels.dtype, np.integer):
+                low, high = (0, 255)
+            elif np.issubdtype(pixels.dtype, np.float):
+                low, high = (-float('inf'), float('inf'))
+            else:
+                raise TypeError(pixels.dtype)
+
+            pixels_space = spaces.Box(
+                shape=pixels.shape, low=low, high=high, dtype=pixels.dtype)
+            pixels_spaces[pixel_key] = pixels_space
+
+        self.observation_space.spaces.update(pixels_spaces)
+
+        self._env = env
+        self._pixels_only = pixels_only
+        self._render_kwargs = render_kwargs
+        self._pixel_keys = pixel_keys
+
+    def observation(self, observation):
+        pixel_observation = self._add_pixel_observation(observation)
+        return pixel_observation
+
+    def _add_pixel_observation(self, wrapped_observation):
+        if self._pixels_only:
+            observation = collections.OrderedDict()
+        elif self._observation_is_dict:
+            observation = type(wrapped_observation)(wrapped_observation)
+        else:
+            observation = collections.OrderedDict()
+            observation[STATE_KEY] = wrapped_observation
+
+        pixel_observations = {
+            pixel_key: self.env.render(**self._render_kwargs[pixel_key])
+            for pixel_key in self._pixel_keys
+        }
+
+        observation.update(pixel_observations)
+
+        return observation
+
 
 def gen_environments(test_setting):
     if test_setting == 'gridworld_3_rooms':
@@ -27,8 +149,8 @@ def gen_environments(test_setting):
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
-    elif test_setting == 'gridworld_2_modular_rooms':
-        env_names = ['Gridworld-partial-room-v3','Gridworld-partial-room-v4']
+    elif test_setting == 'gridworld_doors_teleporters':
+        env_names = ['Gridworld-partial-room-v5']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
@@ -38,6 +160,13 @@ def gen_environments(test_setting):
         env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
         # envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
         environments = [gym.wrappers.AtariPreprocessing(gym.make(env_name), grayscale_newaxis=True) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'gym_classics':
+        env_names = ['CartPole-v0', 'LunarLander-v0', 'MountainCar-v0']
+        environments = [PixelObservationWrapper(gym.make(env_name)) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
@@ -361,6 +490,13 @@ class NeptuneEpochCallback(NeptuneCallback):
         pass
 
 
+"""An observation wrapper that augments observations by pixel values."""
+
+
+STATE_KEY = 'state'
+
+
+
 class MultiYamlDataClassConfig(YamlDataClassConfig):
 
     def load(self, file_paths: Union[Path, str, List[Path], List[str]] = None, path_is_absolute: bool = False):
@@ -399,8 +535,12 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     vae_n_steps_per_epoch: int = None
     vae_batch_size: int = None
     vae_commitment_cost: float = None
+    vae_decay: float = None
     vae_n_embeddings: int = None
     vae_d_embeddings: int = None
+    vae_n_hiddens: int = None
+    vae_n_residual_hiddens: int = None
+    vae_n_residual_layers: int = None
     vae_frame_stack: int = None
     vae_weights_path: str = None
     vae_train_stats_path: str = None

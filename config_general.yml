@@ -2,7 +2,7 @@ tf_eager_mode: False
 model_summaries: False
 neptune_project_name: 'rschiewer/predictor'
 
-env_setting: 'gridworld_doors_teleporters' #'gridworld_3_rooms'
+env_setting: gym_classics #'gridworld_doors_teleporters' #'gridworld_3_rooms'
 env_n_samples_per_env: 80000
 env_mix_memory_fraction: 1.0
 env_sample_mem_path_stub: 'samples/raw/'

@@ -56,12 +56,14 @@ if __name__ == '__main__':
     # plt.show()
 
     # extract trajectories and train predictor
-    enc_o, enc_o_, r, a, done = prepare_predictor_data(trajectories=trajs,
-                                                       vae=vae,
-                                                       n_steps=CONFIG.pred_n_traj_steps,
-                                                       n_warmup_steps=CONFIG.pred_n_warmup_steps)
+    enc_o, enc_o_, r, a, done, i_env = prepare_predictor_data(trajectories=trajs,
+                                                              vae=vae,
+                                                              n_steps=CONFIG.pred_n_traj_steps,
+                                                              n_warmup_steps=CONFIG.pred_n_warmup_steps)
+    if not CONFIG.pred_use_env_idx:
+        i_env = np.ones_like(i_env) * -1
 
-    dataset = (tf.data.Dataset.from_tensor_slices(((enc_o, a), (enc_o_, r, done)))
+    dataset = (tf.data.Dataset.from_tensor_slices(((enc_o, a), (enc_o_, r, done, i_env)))
                .shuffle(100000)
                .repeat(-1)
                .batch(CONFIG.pred_batch_size, drop_remainder=True)
@@ -83,10 +85,11 @@ if __name__ == '__main__':
     #        tf.keras.backend.clear_session()
     #callbacks.append(MyCustomCallback())
 
-    pred.load_weights(predictor_weights_path)
+    #pred.load_weights(predictor_weights_path)
     epochs = np.ceil(CONFIG.pred_n_train_steps / CONFIG.pred_n_steps_per_epoch).astype(np.int32)
     history = pred.fit(dataset,
                        epochs=epochs,
+                       batch_size=CONFIG.pred_batch_size,
                        steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
                        verbose=1,
                        callbacks=callbacks)

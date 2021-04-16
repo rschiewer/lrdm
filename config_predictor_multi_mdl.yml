@@ -10,5 +10,6 @@ pred_decider_lw: 32
 pred_n_models: 3
 pred_batch_size: 128
 pred_tb_log: False
+pred_use_env_idx: True
 pred_weights_path: 'predictor_models/'
 pred_train_stats_path: 'predictor_models/train_stats/'

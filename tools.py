@@ -85,6 +85,13 @@ def gen_environments(test_setting):
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'gridworld_large_room':
+        env_names = ['Gridworld-partial-room-v7']
+        environments = [gym.make(env_name) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
     elif test_setting == 'atari':
         env_names = ['BoxingNoFrameskip-v0', 'SpaceInvadersNoFrameskip-v0', 'DemonAttackNoFrameskip-v0']
         # envs = [gym.wrappers.GrayScaleObservation(gym.wrappers.ResizeObservation(gym.make(env_name), obs_resize), keep_dim=True) for env_name in env_names]
@@ -156,6 +163,7 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     actions = trajectories['a'].astype(np.int32)
     rewards = trajectories['r'].astype(np.float32)
     terminals = trajectories['done'].astype(np.float32)
+    env_idx = trajectories['env']
 
     batch_size = 32
 
@@ -177,7 +185,7 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     reward_inputs = rewards[:, 0:n_steps, np.newaxis]
     terminals_inputs = terminals[:, 0:n_steps, np.newaxis]
 
-    return encoded_obs, encoded_next_obs, reward_inputs, action_inputs, terminals_inputs
+    return encoded_obs, encoded_next_obs, reward_inputs, action_inputs, terminals_inputs, env_idx
 
 
 def load_vae_weights(vae, weights_path, train_stats_path=None, plot_training=False, test_memory=None):
@@ -322,7 +330,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     #    n_warmup_steps = n_steps
 
     trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, warn=False, pad_short_trajectories=True)
-    encoded_obs, _, _, actions, _ = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
+    encoded_obs, _, _, actions, _, _ = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']
     #if not predictor.open_loop_rollout_training:
@@ -487,6 +495,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     pred_n_models: int = None
     pred_batch_size: int = None
     pred_tb_log: bool = None
+    pred_use_env_idx: bool = None
     pred_weights_path: str = None
     pred_train_stats_path: str = None
 

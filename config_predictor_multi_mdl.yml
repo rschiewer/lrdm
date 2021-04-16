@@ -1,12 +1,12 @@
-pred_n_train_steps: 5000
+pred_n_train_steps: 6000
 pred_n_steps_per_epoch: 50
-pred_n_trajectories: 5000
+pred_n_trajectories: 6000
 pred_n_traj_steps: 15
 pred_n_warmup_steps: 5
 pred_pad_trajectories: True
 pred_det_filters: 64
 pred_prob_filters: 32
-pred_decider_lw: 128
+pred_decider_lw: 32
 pred_n_models: 3
 pred_batch_size: 128
 pred_tb_log: False

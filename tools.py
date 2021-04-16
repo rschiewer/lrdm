@@ -109,6 +109,14 @@ def gen_environments(test_setting):
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'LunarLander':
+        env_names = ['LunarLander-v2']
+        environments = [FixedSizePixelObs(gym.make(env_name), (64, 64)) for env_name in env_names]
+        # environments = [gym.make(env_name) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
     elif test_setting == 'new_gridworld':
         env_names = ['MiniGrid-Empty-Random-5x5-v0', 'MiniGrid-LavaCrossingS9N2-v0', 'MiniGrid-ObstructedMaze-1Dl-v0']
         environments = [gym.wrappers.TransformObservation(gym_minigrid.wrappers.RGBImgPartialObsWrapper(gym.make(env_name)),

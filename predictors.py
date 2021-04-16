@@ -314,11 +314,11 @@ class RecurrentPredictor(keras.Model):
                 #w_pred = tfd.RelaxedOneHotCategorical(self._temp_decider(training), params_decider).sample()
                 w_pred = tfd.RelaxedOneHotCategorical(0.1, params_decider).sample()
                 #w_pred = tf.nn.softmax(params_decider)
-                #if tf.random.uniform((1,)) < self._pred_exploration(training):
-                #    shp = tf.stack([tf.shape(w_pred)[0], self.n_models], axis=0)
-                #    w_pred = tf.random.uniform(shp)
-                #    w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
-                #    w_pred = w_pred[:, tf.newaxis, :]
+                if tf.random.uniform((1,)) < self._pred_exploration(training):
+                    shp = tf.stack([tf.shape(w_pred)[0], self.n_models], axis=0)
+                    w_pred = tf.random.uniform(shp)
+                    w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
+                    w_pred = w_pred[:, tf.newaxis, :]
 
             #self.add_metric(self._temp_predictor_picker(training), name='temp_decider')
             #w_pred = tfd.RelaxedOneHotCategorical(temp_decider, params_decider).sample()

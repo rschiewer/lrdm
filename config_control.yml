@@ -7,4 +7,4 @@ ctrl_top_perc: 0.05
 ctrl_gamma: 0.98
 ctrl_do_mpc: True
 ctrl_max_steps: 50
-ctrl_render: False
+ctrl_render: True

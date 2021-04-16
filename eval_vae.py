@@ -34,7 +34,7 @@ if __name__ == '__main__':
                   .prefetch(-1))
     encoded_obs = vae.encode_to_indices(obs_datset)
 
-    embedded = TSNE(n_components=2).fit_transform(encoded_obs)
-    plt.scatter(embedded[:, 0], embedded[:, 1])
+    #embedded = TSNE(n_components=2).fit_transform(encoded_obs)
+    #plt.scatter(embedded[:, 0], embedded[:, 1])
 
 

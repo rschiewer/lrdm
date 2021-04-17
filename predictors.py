@@ -275,13 +275,6 @@ class RecurrentPredictor(keras.Model):
         n_models = len(self.mdl_stack)
         t_start_feedback = n_warmup
 
-        # pad o_in with zeros to avoid out of bounds indexing in _next_input (if-else tf autograph bullshit)
-        #o_in_padded = tf.concat([o_in, tf.zeros((n_batch, n_predict - n_warmup, *self.s_obs, self._vae_n_embeddings))], axis=1)
-
-        #tf.debugging.assert_less(n_warmup, n_predict, ('For rollout, less observations than actions are expected, '
-        #                                               f'but I got {n_warmup} observation and {n_predict} action '
-        #                                               f'steps.'))
-
         # store for rollout results
         o_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
         r_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
@@ -319,10 +312,6 @@ class RecurrentPredictor(keras.Model):
                     w_pred = tf.random.uniform(shp)
                     w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
                     w_pred = w_pred[:, tf.newaxis, :]
-
-            #self.add_metric(self._temp_predictor_picker(training), name='temp_decider')
-            #w_pred = tfd.RelaxedOneHotCategorical(temp_decider, params_decider).sample()
-            #self.add_metric(tf.reduce_mean(temp_decider), name='temp_decider')
 
             # do predictions with all predictors
             for i_m, (h_mdl, params_o_mdl, params_r_mdl, terminal_mdl) in enumerate(self.mdl_stack):
@@ -374,8 +363,6 @@ class RecurrentPredictor(keras.Model):
         params_r = params_r_model(h, training=training)
 
         o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
-        #indices = tf.argmax(o_pred, axis=-1)
-        #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
 
         if training:
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
@@ -393,11 +380,6 @@ class RecurrentPredictor(keras.Model):
         # convert observations to one_hot
         one_hot_obs = tf.one_hot(tf.cast(o_in, tf.int32), self._vae_n_embeddings, axis=-1)
         inputs = (one_hot_obs, a_in)
-
-        #if self.open_loop_rollout_training:
-        #    trajectories = self.rollout_open_loop(inputs, training)
-        #else:
-        #    trajectories = self._rollout_closed_loop(inputs, training)
 
         trajectories = self.rollout_open_loop(inputs, training)
         o_predicted, r_predicted, terminal_predicted, w_predictors = trajectories
@@ -422,13 +404,6 @@ class RecurrentPredictor(keras.Model):
         r_predictions = tf.gather_nd(r_predictions, i_predictor, batch_dims=2)
         terminal_predictions = tf.gather_nd(terminal_predictions, i_predictor, batch_dims=2)
         return o_predictions, r_predictions, terminal_predictions
-
-    def n_trainable_weights(self):
-        vqvae_is_trainable = self._vqvae.trainable
-        self._vqvae.trainable = False
-        n_weights = len(self.trainable_weights)
-        self._vqvae.trainable = vqvae_is_trainable
-        return n_weights
 
     @tf.function
     def train_step(self, data):

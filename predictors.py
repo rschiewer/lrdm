@@ -512,23 +512,23 @@ class RecurrentPredictor(keras.Model):
             n_warmup = tf.shape(x[0])[1]
             n_predict = tf.shape(x[1])[1]
 
-            gamma = 0.95
-            finite_w_diff = tf.abs(w_predictors[:, :, 1:] - w_predictors[:, :, :1])
-            discount = tf.ones_like(finite_w_diff[0])
-            discount_1 = tf.map_fn(
-                lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma, d_traj, initializer=1.0),
-                discount#[:, n_warmup:]
-            )
-            finite_w_diff *= tf.stack([discount_1 for _ in range(self.n_models)])
-            total_stability_loss = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(finite_w_diff)
+            #gamma = 0.95
+            #finite_w_diff = tf.abs(w_predictors[:, :, 1:] - w_predictors[:, :, :1])
+            #discount = tf.ones_like(finite_w_diff[0])
+            #discount_1 = tf.map_fn(
+            #    lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma, d_traj, initializer=1.0),
+            #    discount#[:, n_warmup:]
+            #)
+            #finite_w_diff *= tf.stack([discount_1 for _ in range(self.n_models)])
+            #total_stability_loss = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(finite_w_diff)
 
             # stability loss
-            #total_stability_loss = 0.01 * tf.reduce_mean(tf.abs(w_predictors[1:] - w_predictors[:-1]))
+            total_stability_loss = 0.01 * tf.reduce_mean(tf.abs(w_predictors[1:] - w_predictors[:-1]))
 
             # diversity loss
             avg_pred_probs = tf.reduce_mean(w_predictors[:, :, 0], axis=[1])
             ideal = tf.ones_like(avg_pred_probs) / self.n_models
-            total_diversity_loss = 0.1 * tf.reduce_mean(tf.abs(avg_pred_probs - ideal))
+            total_diversity_loss = tf.reduce_mean(tf.abs(avg_pred_probs - ideal))
 
             total_loss += total_diversity_loss + total_stability_loss
 
@@ -556,8 +556,8 @@ class RecurrentPredictor(keras.Model):
                  't': self._temp(True)}
         stats.update(weight_stats)
         #misc_metrics = {name: metric.result() for name, metric in zip(self.metrics_names, self.metrics)}
-        misc_metrics = {'temp_decider': self._temp_decider(True),
-                        }#'epsilon_decider': self._pred_exploration(True)}
+        misc_metrics = {#'temp_decider': self._temp_decider(True),
+                        'epsilon_decider': self._pred_exploration(True)}
         stats.update(misc_metrics)
 
         #gc.collect()

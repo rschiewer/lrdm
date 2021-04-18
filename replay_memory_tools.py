@@ -10,15 +10,35 @@ import tensorflow as tf
 def detect_trajectories(mem):
     # todo: this is broken, fix it!
     # todo: last state seems to be missing
-    end_states = np.nonzero(mem['done'])[0]
+    end_transitions = np.nonzero(mem['done'])[0]
     # start states are the next state after every terminal state
-    start_states = end_states + 1
+    start_transitions = end_transitions + 1
     # the last terminal state is not followed by a start state, so use it for first start state
-    start_states = np.roll(start_states, 1)
-    start_states[0] = 0
-    # (start_state_idx, end_state_idx, length)
-    traj_info = np.stack([start_states, end_states, end_states - start_states], axis=1)
+    start_transitions = np.roll(start_transitions, 1)
+    start_transitions[0] = 0
+    # (start_transition_idx, end_transition_idx, number_transitions)
+    traj_info = np.stack([start_transitions, end_transitions, end_transitions - start_transitions], axis=1)
     return traj_info
+
+
+def detect_trajectories_2(mem):
+    start_states = []
+    end_states = []
+    lengths = []
+    current_start_state = None
+    for i, transition in enumerate(mem):
+        if current_start_state is None:
+            start_states.append(i)
+            current_start_state = i
+        if transition['done']:
+            end_states.append(i)
+            lengths.append(i - current_start_state)
+            current_start_state = None
+
+    if len(start_states) == len(end_states) + 1:
+        start_states.pop(-1)  # incomplete last trajectory
+    return np.stack([start_states, end_states, lengths], axis=1)
+
 
 
 def extract_sub_memory(mem, desired_length):
@@ -33,14 +53,14 @@ def extract_sub_memory(mem, desired_length):
     traj_info = detect_trajectories(mem)
     breakpoint = 0
     for ts, te, tl in traj_info:
-        breakpoint += tl
+        breakpoint += (tl + 1)
         if breakpoint > desired_length:
-            breakpoint -= tl
+            breakpoint -= (tl + 1)
             break
     return mem[0:breakpoint]
 
 
-def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, random=True, pad_short_trajectories=False):
+def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, sample_random=True, pad_short_trajectories=False):
     traj_info = detect_trajectories(mem)
 
     if pad_short_trajectories:
@@ -60,11 +80,12 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
     cand_iter = iter(candidates)
     subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
     #subtrajectories['done'] = True  # in case of padded subtrajectories, all padded transitions will be terminal
+    n_envs_collected = [0, 0, 0]
     for i_collected in range(num_trajectories):
-        i_traj = np.random.choice(candidates) if random else next(cand_iter)
+        i_traj = np.random.choice(candidates) if sample_random else next(cand_iter)
         i_ts, i_te, n_tl = traj_info[i_traj]
         # traj_length + 1 in order to not miss last transition
-        if random:
+        if sample_random:
             if pad_short_trajectories:
                 i_sub_start = np.random.randint(i_ts, i_te + 1)
                 i_sub_end = min(i_te + 1, i_sub_start + traj_length)
@@ -76,12 +97,31 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, rando
             i_sub_end = traj_length
 
         subtrajectories[i_collected, :i_sub_end - i_sub_start] = mem[i_sub_start: i_sub_end]
+        subtrajectories[i_collected, :]['env'] = mem[i_sub_start]['env']
+        n_envs_collected[mem[i_sub_start]['env']] += 1
+        assert(np.all(mem[i_sub_start: i_sub_end]['env'] == mem[i_sub_start]['env']))
 
 
     for st in subtrajectories:
         assert np.sum(st['done']) <= 1
 
     return subtrajectories
+
+
+def extract_subtrajectories_2(mem, num_trajectories, traj_length):
+    start_indices = np.random.default_rng().integers(0, len(mem), num_trajectories)
+    subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
+    for i_subtraj, i_start in enumerate(start_indices):
+        terminals = np.nonzero(mem[i_start: i_start + traj_length]['done'])[0]
+        if len(terminals) > 0:
+            i_end = i_start + terminals[0]
+        else:
+            i_end = i_start + traj_length
+        subtrajectories[i_subtraj, 0: i_end - i_start] = mem[i_start : i_end]
+        subtrajectories[i_subtraj]['env'] = mem[i_start]['env']
+        assert np.all(mem[i_start: i_end]['env'] == mem[i_start]['env'])
+    return subtrajectories
+
 
 
 def cumulative_episode_rewards(mem):
@@ -213,7 +253,9 @@ def gen_mixed_memory(memories, mem_fractions, file_path=None):
     mix_memory = []
     for mem_frac, mem in zip(mem_fractions, memories):
         n_samples = np.ceil(len(mem) * mem_frac).astype(np.int32)
-        mix_memory.append(extract_sub_memory(mem, n_samples))
+        sub_mem = extract_sub_memory(mem, n_samples)
+        mix_memory.append(sub_mem)
+        assert sub_mem[-1]['done'] == True
 
     mix_memory = np.concatenate(mix_memory, axis=0)
 

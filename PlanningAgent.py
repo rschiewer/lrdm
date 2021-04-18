@@ -6,7 +6,7 @@ from keras_vq_vae import *
 from collections import namedtuple
 import numpy as np
 import numpy.lib.recfunctions as rfn
-from tools import cast_and_normalize_images, cast_and_unnormalize_images, ValueHistory, prepare_predictor_data
+from tools import cast_and_normalize_images, cast_and_unnormalize_images, ValueHistory, prepare_predictor_data, ExperimentConfig
 from replay_memory_tools import line_up_observations
 
 
@@ -70,7 +70,7 @@ class ReplayMemory:
         self._transition_cache.append((s, a, r, done, self._i_tau, *additional_data))
 
         if done:
-            self._transition_cache.append((s_, -1, -1, -1, self._i_tau, *[-1 for _ in self._custom_fields]))
+            self._transition_cache.append((s_, np.full(self.s_act, -1), -1, -1, self._i_tau, *additional_data))
             l_tau = len(self._transition_cache)
 
             if l_tau >= self.n_max_elements:
@@ -90,12 +90,13 @@ class ReplayMemory:
 
             self._data_ptr += l_tau
             self._transition_cache.clear()
-            self._i_tau +=1
+            self._i_tau += 1
             self._n_added += l_tau - 1
             self._last_s_ = None
         else:
             self._last_s_ = s_
 
+    """
     def sample_transitions(self, n_transitions=1, debug=False):
         if self._n_added == 0:
             raise ValueError(f'Can\'t sample {n_transitions} samples, memory is empty!')
@@ -106,6 +107,16 @@ class ReplayMemory:
         else:
             i_samples = self._rng.choice(i_valid, n_transitions)
         return self._build_full_transitions(i_samples)
+    """
+
+    def sample_observations(self, n_obs=-1):
+        i_valid = np.argwhere(self._data['i_tau'] > -1)
+        if n_obs == -1:
+            i_chosen = self._rng.permutation(i_valid)
+        else:
+            i_chosen = self._rng.choice(i_valid, n_obs)
+
+        return self._data[i_chosen]['s']
 
     def sample_trajectories(self, n_trajectories=1, n_steps=1, debug=False):
         if self._i_tau == 0:
@@ -114,31 +125,44 @@ class ReplayMemory:
         # find valid cells in the memory
         i_valid = np.argwhere(self._data['i_tau'] > -1)
         # find all available trajectory indices and the lengths of the respective trajectories
+        # mind: length is here the amount of stored 's', so the number of transitions is l_tau - 1
         i_tau, l_tau = np.unique(self._data[i_valid]['i_tau'], return_counts=True)
-        # filter out too short trajectories
-        valid_i_tau = i_tau[l_tau >= n_steps]
-        valid_l_tau = l_tau[l_tau >= n_steps]
 
         # choose random indices
         if debug:
-            i_tau_chosen, l_tau_chosen = valid_i_tau[0:n_trajectories], valid_l_tau[0:n_trajectories]
+            i_tau_chosen, l_tau_chosen = i_tau[0:n_trajectories], l_tau[0:n_trajectories]
         else:
-            i_tau_chosen, l_tau_chosen = self._rng.choice(zip(valid_i_tau, valid_l_tau), n_trajectories)
+            if n_trajectories == -1:
+                idx_of_idx = self._rng.permutation(len(i_tau))
+            else:
+                idx_of_idx = self._rng.choice(len(i_tau), n_trajectories)
+            i_tau_chosen, l_tau_chosen = i_tau[idx_of_idx], l_tau[idx_of_idx]
 
-        batch = []
-        for i, l in zip(i_tau_chosen, l_tau_chosen):
+        col_names = list(self._data.dtype.names)
+        batch = np.zeros((len(i_tau_chosen), n_steps), dtype=self._return_data_dtype)
+        for i_batch, (i_traj, l_traj) in enumerate(zip(i_tau_chosen, l_tau_chosen)):
+            # find start and endpoint for current subtrajectory
             if debug:
                 subtraj_start = 0
             else:
-                subtraj_start = self._rng.integers(0, l - n_steps)
-            i_tau_current = np.argwhere(self._data['i_tau'] == i).flatten()
-            batch.append(self._build_full_transitions(i_tau_current[subtraj_start: subtraj_start + n_steps]))
+                subtraj_start = self._rng.integers(0, l_traj - 1)  # mind: last element in trajectory is transition that only holds s_
+            subtraj_end = min(subtraj_start + n_steps, l_traj - 1)  # mind: last element in trajectory is transition that only holds s_
+            l_real = subtraj_end - subtraj_start
 
-        return np.stack(batch)
+            # index of transitions in global memory
+            i_global = np.argwhere(self._data['i_tau'] == i_traj).flatten()
+
+            batch[col_names][i_batch, 0: l_real] = self._data[i_global[subtraj_start: subtraj_end]]
+            batch['s_'][i_batch, 0: l_real] = self._data[i_global[subtraj_start: subtraj_end] + 1]['s']
+
+            #full_transitions = self._build_full_transitions(i_global[subtraj_start: subtraj_end])
+
+        return batch
+        #return np.stack(batch)
 
     def _build_full_transitions(self, indices):
         incomplete_tuples = self._data[indices]
-        complete_tuples = rfn.append_fields(incomplete_tuples, 's_', self._data[indices + 1]['s'], dtypes=np.float32)
+        complete_tuples = rfn.append_fields(incomplete_tuples, 's_', self._data[indices + 1]['s'])
         return complete_tuples
 
     def clear(self):
@@ -156,42 +180,46 @@ class ReplayMemory:
 ParamsVae = namedtuple('ParamsVae', 'decay commitment_cost embedding_dim num_embeddings num_hiddens '
                                     'num_residual_hiddens num_residual_layers batch_size')
 ParamsPredictor = namedtuple('ParamsPredictor', 'det_filters prob_filters n_models decider_lw batch_size '
-                                                'n_timesteps n_warmup')
+                                                'n_timesteps n_warmup_steps')
 ParamsPlanning = namedtuple('ParamsPlanning', 'ctrl_n_plan_steps ctrl_n_warmup_steps ctrl_n_rollouts '
                                               'ctrl_n_iterations ctrl_top_perc ctrl_gamma ctrl_do_mpc '
                                               'ctrl_max_steps ctrl_render')
 
 class SplitPlanAgent:
 
-    def __init__(self, obs_shape, n_actions, mem_size, warmup_steps, params_vae, params_predictor, params_planning):
+    def __init__(self, obs_shape, n_actions, mem_size, exploration_steps, vae_train_interval, pred_train_interval,
+                 config: ExperimentConfig):
         self.vae = VectorQuantizerEMAKeras(train_data_variance=1,
-                                           decay=params_vae.decay,
-                                           commitment_cost=params_vae.commitment_cost,
-                                           embedding_dim=params_vae.embedding_dim,
-                                           num_embeddings=params_vae.num_embeddings,
-                                           num_hiddens=params_vae.num_hiddens,
-                                           num_residual_hiddens=params_vae.num_residual_hiddens,
-                                           num_residual_layers=params_vae.num_residual_layers,
+                                           decay=config.vae_decay,
+                                           commitment_cost=config.vae_commitment_cost,
+                                           embedding_dim=config.vae_d_embeddings,
+                                           num_embeddings=config.vae_n_embeddings,
+                                           num_hiddens=config.vae_n_hiddens,
+                                           num_residual_hiddens=config.vae_n_residual_hiddens,
+                                           num_residual_layers=config.vae_n_residual_layers,
                                            grayscale_input=obs_shape[-1] == 1)
         self.vae.compile(optimizer=tf.optimizers.Adam())
         vae_index_matrix_shape = self.vae.compute_latent_shape(obs_shape)
         self.predictor = RecurrentPredictor(observation_shape=vae_index_matrix_shape,
                                             n_actions=n_actions,
                                             vqvae=self.vae,
-                                            det_filters=params_predictor.det_filters,
-                                            prob_filters=params_predictor.prob_filters,
-                                            n_models=params_predictor.n_models,
-                                            decider_filters=params_predictor.decider_lw)
+                                            det_filters=config.pred_det_filters,
+                                            prob_filters=config.pred_prob_filters,
+                                            n_models=config.pred_n_models,
+                                            decider_filters=config.pred_decider_lw)
         self.predictor.compile(optimizer=tf.optimizers.Adam())
-        self.params_planning = params_planning
-        self.params_vae = params_vae
-        self.params_predictor = params_predictor
+        self.config = config
 
         self.obs_shape = obs_shape
         self.n_actions = n_actions
-        self.warmup_steps = warmup_steps
+        self.exploration_steps = exploration_steps
+        self.vae_train_interval = vae_train_interval
+        self.pred_train_interval = pred_train_interval
+        self._vae_init_training_done = False
+        self._pred_init_training_done = False
 
-        self.memory = ReplayMemory(mem_size, obs_shape)
+        custom_fields = [('env', np.int32)]
+        self.memory = ReplayMemory(mem_size, obs_shape, custom_fields=custom_fields)
 
     def plan(self, obs_history, act_history, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
         """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
@@ -242,40 +270,47 @@ class SplitPlanAgent:
 
         return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
 
-    def train(self, env, steps):
+    def train(self, env, i_env, steps):
         i_episode = 0
         i_step = 0
         while i_step < steps:
-            act_history = ValueHistory((), self.params_planning.ctrl_n_warmup_steps - 1)
-            obs_history = ValueHistory(self.obs_shape, self.params_planning.ctrl_n_warmup_steps)
+            available_actions = []
+            act_history = ValueHistory((), self.config.ctrl_n_warmup_steps - 1)
+            obs_history = ValueHistory(self.obs_shape, self.config.ctrl_n_warmup_steps)
 
             obs_history.append(env.reset())
             t_ep = 0
             r_ep = 0
             while True:
-                if i_step < self.warmup_steps:
-                    action = env.action_space.sample()
-                else:
-                    actions = self.plan(obs_history, act_history, self.n_actions, self.params_planning.ctrl_n_plan_steps,
-                                        self.params_planning.ctrl_n_rollouts, self.params_planning.ctrl_n_iterations,
-                                        self.params_planning.ctrl_top_perc, self.params_planning.ctrl_gamma)
-                    action = actions[0].numpy()
+                # generate action(s)
+                if len(available_actions) == 0:
+                    if i_step < self.exploration_steps:
+                        available_actions.append(env.action_space.sample())
+                    else:
+                        actions = self.plan(obs_history, act_history, self.n_actions, self.config.ctrl_n_plan_steps,
+                                        self.config.ctrl_n_rollouts, self.config.ctrl_n_iterations,
+                                        self.config.ctrl_top_perc, self.config.ctrl_gamma)
+                        available_actions.extend(actions.numpy().tolist())
+
+                # choose first action
+                action = available_actions.pop(0)
+
+                # clear remaining actions if we re-plan in every step
+                if self.config.ctrl_do_mpc:
+                    available_actions.clear()
+
                 next_obs, reward, done, info = env.step(action)
                 r_ep += reward
 
                 if 'player_pos' in info.keys():
                     player_pos = info.pop('player_pos', None)
-                elif env.agent_pos is not None:
+                elif hasattr(env, 'agent_pos') and env.agent_pos is not None:
                     player_pos = env.agent_pos
                 else:
                     player_pos = [-43, -42]
 
-                self.memory.add(obs_history[-1], action, reward, next_obs, done)
-                if self.memory.added_transitions >= self.params_predictor.batch_size:
-                    batch_predictor = self.memory.sample_trajectories(self.params_predictor.batch_size,
-                                                                      self.params_predictor.n_timesteps,
-                                                                      self.params_predictor.n_warmup)
-                    self.train_step(batch_predictor)
+                self.memory.add(obs_history[-1], action, reward, next_obs, done, env=i_env)
+
 
                 act_history.append(action)
                 obs_history.append(next_obs)
@@ -292,20 +327,32 @@ class SplitPlanAgent:
                     break
 
             i_episode += 1
+            if i_step > self.exploration_steps:
+                if not self._vae_init_training_done:
+                    self._vae_init_training_done = True
+                    self.train_vae(100, -1)
+                else:
+                    self.train_vae(10, -1)
+                if not self._pred_init_training_done:
+                    self._pred_init_training_done = True
+                    self.train_predictor(100, -1)
+                else:
+                    self.train_predictor(30, -1)
 
         print('Training done')
 
-    def train_step(self, trajectories):
-        # vae training
-        obs_only = line_up_observations(trajectories)
-        obs_only = cast_and_normalize_images(obs_only)
-        self.vae.data_variance = tf.math.reduce_variance(obs_only)
-        self.vae.fit(obs_only)
+    def train_vae(self, n_epochs, train_set_size):
+        obs = self.memory.sample_observations(train_set_size)
+        obs = cast_and_normalize_images(obs)
+        self.vae.data_variance = tf.math.reduce_variance(obs)
+        self.vae.fit(obs, epochs=n_epochs)
 
-        # predictor training
-        enc_o, enc_o_, r, a, done = prepare_predictor_data(trajectories, self.vae, self.params_predictor.n_timesteps,
-                                                           self.params_predictor.n_warmup_steps)
-        self.predictor.fit([enc_o, a], [enc_o_, r, done])
+    def train_predictor(self, n_epochs, n_trajectories):
+        trajectories = self.memory.sample_trajectories(n_trajectories, self.config.pred_n_traj_steps)
+        enc_o, enc_o_, r, a, done, i_env = prepare_predictor_data(trajectories, self.vae,
+                                                                  self.config.pred_n_traj_steps,
+                                                                  self.config.pred_n_warmup_steps)
+        self.predictor.fit([enc_o, a], [enc_o_, r, done, i_env], epochs=n_epochs)
 
     def train_step_wip(self, s, a, r, s_, done):
         norm_fact = np.prod(self.predictor.belief_state_shape)

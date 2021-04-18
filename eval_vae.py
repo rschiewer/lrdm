@@ -25,16 +25,50 @@ if __name__ == '__main__':
                      summary=CONFIG.model_summaries)
 
     load_vae_weights(vae=vae, weights_path=vae_weights_path, train_stats_path=vae_train_stats_path,
-                     plot_training=True, test_memory=mix_memory)
+                     plot_training=False, test_memory=None)
 
-    batch_size = 32
-    obs_datset = (tf.data.Dataset.from_tensor_slices(mix_memory[::10]['s'])
+    # codebook vector occupancy
+    obs_datset = (tf.data.Dataset.from_tensor_slices(mix_memory['s'])
                   .map(cast_and_normalize_images)
-                  .batch(batch_size, drop_remainder=False)
+                  .batch(64, drop_remainder=False)
                   .prefetch(-1))
     encoded_obs = vae.encode_to_indices(obs_datset)
+    n_occurrences = np.bincount(encoded_obs.numpy().flatten())
+    plt.bar(range(len(n_occurrences)), n_occurrences)
+    plt.title('Codebook vector usage')
+    plt.show()
 
-    #embedded = TSNE(n_components=2).fit_transform(encoded_obs)
-    #plt.scatter(embedded[:, 0], embedded[:, 1])
+    # get reward observations vs. non-rewarding ones
+    rewarding_samples = []
+    normal_samples = []
+    for i, sample in enumerate(mix_memory):
+        if sample['r'] > 0:
+            rewarding_samples.append(i)
+        else:
+            normal_samples.append(i)
+
+    rew_trans = mix_memory[rewarding_samples]
+    print(rew_trans.shape)
+    rew_obs_datset = (tf.data.Dataset.from_tensor_slices(rew_trans['s_'])
+                      .map(cast_and_normalize_images)
+                      .batch(64, drop_remainder=False)
+                      .prefetch(-1))
+    rew_encoded_obs = vae.encode_to_indices(rew_obs_datset)
+    rew_n_occurrences = np.bincount(rew_encoded_obs.numpy().flatten()) * 10
+    plt.bar(range(len(rew_n_occurrences)), rew_n_occurrences, label='rewarding', alpha=0.5)
+
+    norm_trans = mix_memory[normal_samples]
+    print(norm_trans.shape)
+    norm_obs_datset = (tf.data.Dataset.from_tensor_slices(norm_trans['s'])
+                      .map(cast_and_normalize_images)
+                      .batch(64, drop_remainder=False)
+                      .prefetch(-1))
+    norm_encoded_obs = vae.encode_to_indices(norm_obs_datset)
+    norm_n_occurrences = np.bincount(norm_encoded_obs.numpy().flatten())
+    plt.bar(range(len(norm_n_occurrences)), norm_n_occurrences, label='normal', alpha=0.5)
+    plt.legend()
+
+    plt.show()
+
 
 

@@ -42,7 +42,7 @@ if __name__ == '__main__':
 
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
-        run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('ctrl_')}
+        run['parameters'] = {k: v for k,v in vars(CONFIG).items()}
         run['sys/tags'].add('control')
         run['predictor_params'] = pred.count_params()
         run['vae_params'] = vae.count_params()

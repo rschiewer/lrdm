@@ -123,7 +123,7 @@ def extract_subtrajectories_unbiased(mem, num_trajectories, traj_length):
     for i_subtraj, i_start in enumerate(start_indices):
         terminals = np.nonzero(mem[i_start: i_start + traj_length]['done'])[0]
         if len(terminals) > 0:
-            i_end = i_start + terminals[0]
+            i_end = i_start + terminals[0] + 1
         else:
             i_end = i_start + traj_length
         subtrajectories[i_subtraj, 0: i_end - i_start] = mem[i_start : i_end]

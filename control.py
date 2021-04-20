@@ -8,7 +8,8 @@ from replay_memory_tools import cast_and_normalize_images
 from tools import ValueHistory
 
 
-def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
+def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma,
+         env_name, neptune_run):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
     and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
@@ -31,6 +32,7 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
 
     assert n_iterations > 0, f'Number of iterations must be geater than 0 but is {n_iterations}'
 
+    per_predictor_weights = []
     for i_iter in range(n_iterations):
         # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
         # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
@@ -38,6 +40,7 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
         a_in = tf.concat([a_hist, a_new], axis=1)
 
         o_pred, r_pred, done_pred, pred_weights = predictor([o_hist, a_in])
+
 
         # make sure trajectory ends after reward was collected once
         #processed_r_pred = np.zeros_like(r_pred)
@@ -78,7 +81,14 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
         denominator = tf.reduce_sum(top_a_sequence_onehot, axis=[0, 2])[..., tf.newaxis]
         dist_params = numerator / denominator
 
-    #print(f'Final action probabilities: {dist_params[0]}')
+        # logging
+        per_predictor = tf.reduce_mean(pred_weights, axis=[1, 2])
+        per_predictor_weights.append(per_predictor)
+
+    if neptune_run:
+        neptune_run[f'{env_name}/w_planning'].log(tf.reduce_mean(per_predictor_weights, axis=[0]))
+        neptune_run[f'{env_name}/best_action_sequences'].log(top_a_sequence)
+
     return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
 
 
@@ -135,8 +145,8 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
     return tf.cast(tf.round(tfp.distributions.MultivariateNormalDiag(loc=mean, scale_diag=scale).sample()), tf.int32)
 
 
-def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5, top_perc=0.1,
-            gamma=0.99, do_mpc=True, max_steps=100, render=False):
+def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5,
+            top_perc=0.1, gamma=0.99, do_mpc=True, max_steps=100, render=False, neptune_run=None):
     act_history = ValueHistory((), warmup_steps - 1)
     obs_history = ValueHistory(env_info['obs_shape'], warmup_steps)
     #available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
@@ -162,7 +172,7 @@ def control(predictor, vae, env, env_info, plan_steps=50, warmup_steps=1, n_roll
         # propose new actions of none present
         if len(available_actions) == 0:
             actions = plan(predictor, vae, obs_history, act_history, env_info['n_actions'], plan_steps, n_rollouts,
-                           n_iterations, top_perc, gamma)
+                           n_iterations, top_perc, gamma, env_name, neptune_run)
             available_actions.extend([a for a in actions.numpy()])
 
         # pick first one and trash the rest if we do MPC

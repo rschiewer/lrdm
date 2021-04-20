@@ -43,16 +43,21 @@ if __name__ == '__main__':
         run = neptune.init(project=CONFIG.neptune_project_name)
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('ctrl_')}
         run['sys/tags'].add('control')
+        run['predictor_params'] = pred.count_params()
+        run['vae_params'] = vae.count_params()
     else:
         run = None
 
     for i_run in range(CONFIG.ctrl_n_runs):
         for name, env in zip(env_names, envs):
-            r, t = control(predictor=pred, vae=vae, env=env, env_info=env_info, plan_steps=CONFIG.ctrl_n_plan_steps,
-                           warmup_steps=CONFIG.ctrl_n_warmup_steps,
+            print(f'Planning in {name}')
+            if name == 'Gridworld-partial-room-v7':
+                env.player_random_start = False
+            r, t = control(predictor=pred, vae=vae, env=env, env_info=env_info, env_name=name,
+                           plan_steps=CONFIG.ctrl_n_plan_steps, warmup_steps=CONFIG.ctrl_n_warmup_steps,
                            n_rollouts=CONFIG.ctrl_n_rollouts, n_iterations=CONFIG.ctrl_n_iterations,
                            top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma, do_mpc=CONFIG.ctrl_do_mpc,
-                           max_steps=CONFIG.ctrl_max_steps, render=CONFIG.ctrl_render)
+                           max_steps=CONFIG.ctrl_max_steps, render=CONFIG.ctrl_render, neptune_run=run)
 
             tf.keras.backend.clear_session()
             gc.collect()

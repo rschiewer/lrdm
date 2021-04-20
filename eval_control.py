@@ -36,7 +36,8 @@ if __name__ == '__main__':
                          decider_lw=CONFIG.pred_decider_lw,
                          n_models=CONFIG.pred_n_models,
                          tensorboard_log=CONFIG.pred_tb_log,
-                         summary=CONFIG.model_summaries)
+                         summary=CONFIG.model_summaries,
+                         tf_eager_mode=CONFIG.tf_eager_mode)
     pred.load_weights(predictor_weights_path)
 
     if CONFIG.neptune_project_name:

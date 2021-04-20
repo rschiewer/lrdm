@@ -1,9 +1,7 @@
 from project_init import *
-from tools import gen_environments, vq_vae_net, predictor_net, load_vae_weights, \
-    prepare_predictor_data
-from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path, \
-    gen_predictor_train_stats_path
-from replay_memory_tools import load_env_samples, extract_subtrajectories
+from replay_memory_tools import cast_and_unnormalize_images
+from tools import *
+from replay_memory_tools import *
 import numpy as np
 import tensorflow as tf
 import neptune.new as neptune
@@ -21,12 +19,18 @@ if __name__ == '__main__':
 
     # load train data and extract trajectories
     mix_memory = load_env_samples(mix_mem_path)
-    trajs = extract_subtrajectories(mem=mix_memory,
-                                    num_trajectories=CONFIG.pred_n_trajectories,
-                                    traj_length=CONFIG.pred_n_traj_steps,
-                                    pad_short_trajectories=CONFIG.pred_pad_trajectories)
+    mem_sanity_check(mix_memory)
+    indices, occurrences = np.unique(mix_memory['env'], return_counts=True)
+    #trajs = extract_subtrajectories(mem=mix_memory,
+    #                                num_trajectories=CONFIG.pred_n_trajectories,
+    #                                traj_length=CONFIG.pred_n_traj_steps,
+    #                                pad_short_trajectories=CONFIG.pred_pad_trajectories)
+    trajs = extract_subtrajectories_unbiased(mix_memory, CONFIG.pred_n_trajectories,
+                                             CONFIG.pred_n_traj_steps)
     train_data_var = np.var(mix_memory['s'][0] / 255)
     del mix_memory  # conserve memory
+
+    #trajectory_video(trajs[2000:2010]['s_'], '0123456789')
 
     # instantiate vae and load trained weights
     vae = vq_vae_net(obs_shape=env_info['obs_shape'],
@@ -48,7 +52,8 @@ if __name__ == '__main__':
                          decider_lw=CONFIG.pred_decider_lw,
                          n_models=CONFIG.pred_n_models,
                          tensorboard_log=CONFIG.pred_tb_log,
-                         summary=CONFIG.model_summaries)
+                         summary=CONFIG.model_summaries,
+                         tf_eager_mode=CONFIG.tf_eager_mode)
 
     # rewards = cumulative_episode_rewards(mix_memory)
     # rewards_from_mem = mix_memory['r'].sum()
@@ -60,6 +65,11 @@ if __name__ == '__main__':
                                                               vae=vae,
                                                               n_steps=CONFIG.pred_n_traj_steps,
                                                               n_warmup_steps=CONFIG.pred_n_warmup_steps)
+
+    #dec_o_ = cast_and_unnormalize_images(vae.decode_from_indices(tf.cast(enc_o_, tf.int32)))
+    #trajectory_video(np.stack([dec_o_[4000].numpy(), trajs[4000]['s_']]), 'ro')
+
+
     if not CONFIG.pred_use_env_idx:
         i_env = np.ones_like(i_env) * -1
 
@@ -75,6 +85,8 @@ if __name__ == '__main__':
         neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor')
+        run['predictor_params'] = pred.count_params()
+        run['vae_params'] = vae.count_params()
         callbacks.append(neptune_cbk)
     else:
         run = None

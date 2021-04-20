@@ -33,4 +33,5 @@ if __name__ == '__main__':
                          decider_lw=CONFIG.pred_decider_lw,
                          n_models=CONFIG.pred_n_models,
                          tensorboard_log=CONFIG.pred_tb_log,
-                         summary=True)
+                         summary=True,
+                         tf_eager_mode=CONFIG.tf_eager_mode)

@@ -40,6 +40,15 @@ def detect_trajectories_2(mem):
     return np.stack([start_states, end_states, lengths], axis=1)
 
 
+def mem_sanity_check(mem):
+    traj_info = detect_trajectories(mem)
+    for s, e, l in traj_info:
+        assert mem[s]['done'] == False
+        assert mem[e]['done'] == True
+        assert np.all(mem[s:e+1]['env'] == mem[s]['env'])
+    indices, occurrences = np.unique(mem['env'], return_counts=True)
+    print(f'Different environment indices: {indices}, numer of occurrences: {occurrences}')
+
 
 def extract_sub_memory(mem, desired_length):
     """Tries to extract ``desired_length`` samples from ``mem`` but respects the individual trajectories in
@@ -108,7 +117,7 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, sampl
     return subtrajectories
 
 
-def extract_subtrajectories_2(mem, num_trajectories, traj_length):
+def extract_subtrajectories_unbiased(mem, num_trajectories, traj_length):
     start_indices = np.random.default_rng().integers(0, len(mem), num_trajectories)
     subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
     for i_subtraj, i_start in enumerate(start_indices):

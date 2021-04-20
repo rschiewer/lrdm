@@ -15,8 +15,7 @@ from yamldataclassconfig import YamlDataClassConfig
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
-from replay_memory_tools import cast_and_normalize_images, extract_subtrajectories, stack_observations, \
-    unstack_observations, cast_and_unnormalize_images, trajectory_video, blockworld_position_images
+from replay_memory_tools import *
 
 import collections
 from collections.abc import MutableMapping
@@ -43,7 +42,7 @@ class FixedSizePixelObs(ObservationWrapper):
         pixels = self.env.render(mode='rgb_array')
         self.env.close()
 
-        if np.issubdtype(pixels.dtype, np.integer):
+        if np.issubdtype(pixels.dtype, np.iextract_subtrajectories_2nteger):
             low, high = (0, 255)
         elif np.issubdtype(pixels.dtype, np.float):
             low, high = (-float('inf'), float('inf'))
@@ -139,15 +138,16 @@ def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment
                                   embedding_dim=d_embeddings, grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
 
+    vae.build((None, *obs_shape))
+
     if summary:
-        vae.build((None, *obs_shape))
         vae.summary()
 
     return vae
 
 
 def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log,
-                  summary=False):
+                  summary=False, tf_eager_mode=False):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
     all_predictor = RecurrentPredictor(vae_index_matrix_shape, n_actions,
                                        vae,
@@ -158,10 +158,12 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        n_models=n_models, debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
 
-    if summary:
+    if not tf_eager_mode:
         net_s_obs = tf.TensorShape((None, None, *vae.compute_latent_shape(obs_shape)))
         net_s_act = tf.TensorShape((None, None, 1))
         all_predictor.build([net_s_obs, net_s_act])
+
+    if summary:
         all_predictor.summary()
 
     return all_predictor
@@ -337,7 +339,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     #if not predictor.open_loop_rollout_training:
     #    n_warmup_steps = n_steps
 
-    trajectories = extract_subtrajectories(mem, n_trajectories, n_steps, warn=False, pad_short_trajectories=True)
+    trajectories = extract_subtrajectories_unbiased(mem, n_trajectories, n_steps)
     encoded_obs, _, _, actions, _, _ = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']

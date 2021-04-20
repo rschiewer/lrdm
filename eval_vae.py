@@ -25,7 +25,7 @@ if __name__ == '__main__':
                      summary=CONFIG.model_summaries)
 
     load_vae_weights(vae=vae, weights_path=vae_weights_path, train_stats_path=vae_train_stats_path,
-                     plot_training=False, test_memory=None)
+                     plot_training=False, test_memory=mix_memory)
 
     # codebook vector occupancy
     obs_datset = (tf.data.Dataset.from_tensor_slices(mix_memory['s'])

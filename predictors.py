@@ -95,7 +95,6 @@ class RecurrentPredictor(keras.Model):
         x_params_pred = layers.TimeDistributed(layers.Dense(n_mdl * 20, activation=None, name='p_pred_out'))(x_params_pred)
         x_params_pred = layers.ReLU()(x_params_pred)
         x_params_pred = layers.TimeDistributed(layers.Dense(n_mdl, activation=None, name='p_pred_out'))(x_params_pred)
-        x_params_pred = layers.ReLU()(x_params_pred)
 
         return keras.Model(inputs=[in_o, in_a, lstm_c, lstm_h], outputs=[x_params_pred, lstm_states], name='p_pred_model')
 
@@ -248,7 +247,7 @@ class RecurrentPredictor(keras.Model):
             params_o = params_o_model(h, training=training)
             params_r = params_r_model(h, training=training)
 
-            o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
+            o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
             #o_pred = tf.nn.softmax(params_o)
             #r_pred = params_r[:, :, 0, tf.newaxis]
@@ -275,10 +274,18 @@ class RecurrentPredictor(keras.Model):
         n_models = len(self.mdl_stack)
         t_start_feedback = n_warmup
 
+        # pad o_in with zeros to avoid out of bounds indexing in _next_input (if-else tf autograph bullshit)
+        #o_in_padded = tf.concat([o_in, tf.zeros((n_batch, n_predict - n_warmup, *self.s_obs, self._vae_n_embeddings))], axis=1)
+
+        #tf.debugging.assert_less(n_warmup, n_predict, ('For rollout, less observations than actions are expected, '
+        #                                               f'but I got {n_warmup} observation and {n_predict} action '
+        #                                               f'steps.'))
+
         # store for rollout results
         o_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
         r_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
         terminal_predictions = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
+        w_predictors = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
 
         # placeholders for start
         states_h_0 = tf.zeros((self.n_models, 2, n_batch, *self._det_lstm_shape), dtype=tf.float32)
@@ -288,32 +295,7 @@ class RecurrentPredictor(keras.Model):
         o_pred = tf.zeros((self.n_models, n_batch, 1, *self.s_obs, self._vae_n_embeddings))
         w_pred = tf.fill((n_batch, 1, len(self.mdl_stack)), 1.0 / len(self.mdl_stack))
 
-        # pick a predictor given all warmup observations
-        if self.n_models > 1:
-            if tf.random.uniform((1,)) < self._pred_exploration(training):
-                shp = tf.stack([tf.shape(w_pred)[0], self.n_models], axis=0)
-                w_pred = tf.random.uniform(shp)
-                w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
-                w_pred = w_pred[:, tf.newaxis, :]
-            else:
-                for i_t in range(n_warmup):
-                    o_next = o_in[:, i_t, tf.newaxis]#tf.gather_nd(o_in, i_t, batch_dims=1)
-                    a_next = a_in[:, i_t, tf.newaxis]#tf.gather_nd(a_in, i_t, batch_dims=1)
-                    params_decider, states_decider = self.params_decider([o_next, a_next, states_decider[0], states_decider[1]])
-                    params_decider = params_decider[:, 0, tf.newaxis, :]  # make tensor shape explicit (none, 1, n_models) for autograph
-                    # w_pred = tfd.relaxedonehotcategorical(self._temp_decider(training), params_decider).sample()
-                    w_pred = tfd.RelaxedOneHotCategorical(0.1, params_decider).sample()
-                    # w_pred = tf.nn.softmax(params_decider)
-
-            # decider will choose predictor weights after all warmup steps have been seen, but the weights will also
-            # be valid for the warmup steps. Thus, the decider can look into the future from the perspective of all
-            # but the last warmup step.
-            w_predictors = tf.repeat(w_pred, n_predict, axis=1) # same weight for all timesteps
-            w_predictors = tf.transpose(w_predictors, [1, 0, 2])  # so that it fits into the old scheme TODO: this and the transposition below cancel each other out
-        else:
-            w_predictors = tf.ones((n_predict, n_batch, 1))
-
-        # rollouts for all individual predictor models
+        # rollout start
         for i_t in range(n_predict):
             o_step = tf.TensorArray(tf.float32, size=n_models)
             r_step = tf.TensorArray(tf.float32, size=n_models)
@@ -324,7 +306,20 @@ class RecurrentPredictor(keras.Model):
             # choose next current observation based on predictor weights of last iteration (i.e. given last observation)
             o_next, a_next = self._next_input(o_in, a_in, o_pred, w_pred, i_t, t_start_feedback)
 
-            # do prediction for current step with all predictors
+            # pick a predictor given current observation
+            if self.n_models > 1:
+                params_decider, states_decider = self.params_decider([o_next, a_next, states_decider[0], states_decider[1]])
+                params_decider = params_decider[:, 0, tf.newaxis, :]  # make tensor shape explicit (None, 1, n_models) for autograph
+                #w_pred = tfd.RelaxedOneHotCategorical(self._temp_decider(training), params_decider).sample()
+                w_pred = tfd.RelaxedOneHotCategorical(1, logits=params_decider).sample()
+                #w_pred = tf.nn.softmax(params_decider)
+                #if tf.random.uniform((1,)) < self._pred_exploration(training):
+                #    shp = tf.stack([tf.shape(w_pred)[0], self.n_models], axis=0)
+                #    w_pred = tf.random.uniform(shp)
+                #    w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
+                #    w_pred = w_pred[:, tf.newaxis, :]
+
+            # do predictions with all predictors
             for i_m, (h_mdl, params_o_mdl, params_r_mdl, terminal_mdl) in enumerate(self.mdl_stack):
                 o_pred_mdl, r_pred_mdl, terminal_pred_mdl, model_h_state_0, model_h_state_1 = self._open_loop_step(h_mdl, params_o_mdl, params_r_mdl, terminal_mdl, o_next, a_next, states_h_0[i_m], states_h_1[i_m], training)
 
@@ -343,18 +338,19 @@ class RecurrentPredictor(keras.Model):
             o_predictions = o_predictions.write(i_t, o_pred)
             r_predictions = r_predictions.write(i_t, r_pred)
             terminal_predictions = terminal_predictions.write(i_t, terminal_pred)
+            w_predictors = w_predictors.write(i_t, w_pred[:, 0])
 
         # currently, outputs have two time dimensions (timestep, predictor, batch, 1 (timestep), width, height, one_hot_vec)
-        o_predictions = o_predictions.stack()[:, :, :, 0, ...]
-        r_predictions = r_predictions.stack()[:, :, :, 0, ...]
-        terminal_predictions = terminal_predictions.stack()[:, :, :, 0, ...]
-        #w_predictors_st = w_predictors.stack()  # (timestep, batch, n_models)
+        o_predictions_st = o_predictions.stack()[:, :, :, 0, ...]
+        r_predictions_st = r_predictions.stack()[:, :, :, 0, ...]
+        terminal_predictions_st = terminal_predictions.stack()[:, :, :, 0, ...]
+        w_predictors_st = w_predictors.stack()
         # currently, outputs are ordered like (timestep, predictor, batch, width, height, one_hot_vec)
         # they need to be transposed to (predictor, batch, timestep, width, height, one_hot_vec)
-        o_predictions = tf.transpose(o_predictions, [1, 2, 0, 3, 4, 5])
-        r_predictions = tf.transpose(r_predictions, [1, 2, 0, 3])
-        terminal_predictions = tf.transpose(terminal_predictions, [1, 2, 0, 3])
-        w_predictors = tf.transpose(w_predictors, [2, 1, 0])  # (n_models, batch, timestep)
+        o_predictions_tr = tf.transpose(o_predictions_st, [1, 2, 0, 3, 4, 5])
+        r_predictions_tr = tf.transpose(r_predictions_st, [1, 2, 0, 3])
+        terminal_predictions_tr = tf.transpose(terminal_predictions_st, [1, 2, 0, 3])
+        w_predictors_tr = tf.transpose(w_predictors_st, [2, 1, 0])
 
         """
         with tf.summary.record_if(self._tensorboard_log):
@@ -364,7 +360,7 @@ class RecurrentPredictor(keras.Model):
                     tf.summary.histogram(f'final step lstm states cell 0 pred_{i_pred}', tf.reshape(h_pred_cur, (-1,)), step=self._train_step)
         """
 
-        return o_predictions, r_predictions, terminal_predictions, w_predictors
+        return o_predictions_tr, r_predictions_tr, terminal_predictions_tr, w_predictors_tr
 
     @tf.function
     def _open_loop_step(self, det_model, params_o_model, params_r_model, terminal_mdl, o_inp, a_inp, states_h_0, states_h_1, training):
@@ -373,6 +369,8 @@ class RecurrentPredictor(keras.Model):
         params_r = params_r_model(h, training=training)
 
         o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
+        #indices = tf.argmax(o_pred, axis=-1)
+        #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
 
         if training:
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
@@ -414,6 +412,13 @@ class RecurrentPredictor(keras.Model):
         r_predictions = tf.gather_nd(r_predictions, i_predictor, batch_dims=2)
         terminal_predictions = tf.gather_nd(terminal_predictions, i_predictor, batch_dims=2)
         return o_predictions, r_predictions, terminal_predictions
+
+    def n_trainable_weights(self):
+        vqvae_is_trainable = self._vqvae.trainable
+        self._vqvae.trainable = False
+        n_weights = len(self.trainable_weights)
+        self._vqvae.trainable = vqvae_is_trainable
+        return n_weights
 
     @tf.function
     def train_step(self, data):
@@ -474,7 +479,7 @@ class RecurrentPredictor(keras.Model):
                 w_predictor = w_predictors[i]
                 curr_mdl_unweighted_obs_err = tf.losses.categorical_crossentropy(o_groundtruth, o_pred)
                 curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * w_predictor)
-                curr_mdl_r_err = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(tf.losses.huber(r_groundtruth, r_pred) * w_predictor)
+                curr_mdl_r_err = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(tf.losses.mse(r_groundtruth, r_pred) * w_predictor)
                 curr_mdl_terminal_err = 0.01 * np.prod(self.belief_state_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
                 curr_mdl_pred_err = curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
@@ -508,14 +513,15 @@ class RecurrentPredictor(keras.Model):
             #total_stability_loss = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(finite_w_diff)
 
             # stability loss
-            #total_stability_loss = 0.01 * tf.reduce_mean(tf.abs(w_predictors[1:] - w_predictors[:-1]))
+            total_stability_loss = 0.01 * tf.reduce_mean(tf.abs(w_predictors[1:] - w_predictors[:-1]))
 
             # diversity loss
-            #avg_pred_probs = tf.reduce_mean(w_predictors[:, :, 0], axis=[1])
-            #ideal = tf.ones_like(avg_pred_probs) / self.n_models
-            #total_diversity_loss = tf.reduce_mean(tf.abs(avg_pred_probs - ideal))
+            avg_pred_probs = tf.reduce_mean(w_predictors[:, :, 0], axis=[1])
+            ideal = tf.ones_like(avg_pred_probs) / self.n_models
+            total_diversity_loss = tf.reduce_mean(tf.abs(avg_pred_probs - ideal))
 
             #total_loss += total_diversity_loss + total_stability_loss
+            #total_loss += total_stability_loss
 
 
         # Compute gradients
@@ -536,15 +542,14 @@ class RecurrentPredictor(keras.Model):
                  'r_err': total_r_err,
                  'terminal_err': total_terminal_err,
                  #'diversity_loss': total_diversity_loss,
-                 #'stability_loss': total_stability_loss,
+                 #'stab_loss': total_stability_loss,
                  'picker_loss': picker_loss,
-                 't': self._temp(True),
-                 'epsilon_decider': self._pred_exploration(True)}
+                 't': self._temp(True)}
         stats.update(weight_stats)
         #misc_metrics = {name: metric.result() for name, metric in zip(self.metrics_names, self.metrics)}
-        #misc_metrics = {#'temp_decider': self._temp_decider(True),
-        #                'epsilon_decider': self._pred_exploration(True)}
-        #stats.update(misc_metrics)
+        misc_metrics = {#'temp_decider': self._temp_decider(True),
+                        'epsilon_decider': self._pred_exploration(True)}
+        stats.update(misc_metrics)
 
         #gc.collect()
 

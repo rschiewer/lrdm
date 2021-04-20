@@ -13,6 +13,7 @@ if __name__ == '__main__':
     # load and prepare data
     mix_memory = load_env_samples(mix_mem_path)
     train_data_var = np.var(mix_memory['s'][0] / 255)
+    mem_sanity_check(mix_memory)
 
     # instantiate vae and load trained weights
     vae = vq_vae_net(obs_shape=env_info['obs_shape'],
@@ -40,6 +41,8 @@ if __name__ == '__main__':
         run = neptune.init(project=CONFIG.neptune_project_name)
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor_performance')
+        run['predictor_params'] = pred.count_params()
+        run['vae_params'] = vae.count_params()
     else:
         run = None
 

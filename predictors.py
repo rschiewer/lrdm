@@ -311,8 +311,8 @@ class RecurrentPredictor(keras.Model):
                 params_decider, states_decider = self.params_decider([o_next, a_next, states_decider[0], states_decider[1]])
                 params_decider = params_decider[:, 0, tf.newaxis, :]  # make tensor shape explicit (None, 1, n_models) for autograph
                 #w_pred = tfd.RelaxedOneHotCategorical(self._temp_decider(training), params_decider).sample()
-                w_pred = tfd.RelaxedOneHotCategorical(1, logits=params_decider).sample()
-                #w_pred = tf.nn.softmax(params_decider)
+                #w_pred = tfd.RelaxedOneHotCategorical(1, logits=params_decider).sample()
+                w_pred = tf.nn.softmax(params_decider)
                 #if tf.random.uniform((1,)) < self._pred_exploration(training):
                 #    shp = tf.stack([tf.shape(w_pred)[0], self.n_models], axis=0)
                 #    w_pred = tf.random.uniform(shp)
@@ -398,7 +398,7 @@ class RecurrentPredictor(keras.Model):
 
         return o_predicted, r_predicted, terminal_predicted, w_predictors
 
-    @tf.function
+    #@tf.function
     def most_probable_trajectories(self, o_predictions, r_predictions, terminal_predictions, w_predictors):
         # o_predictions shape: (predictor, batch, timestep, width, height, one_hot_index)
         # push predictor index backwards for easier selection
@@ -479,8 +479,8 @@ class RecurrentPredictor(keras.Model):
                 w_predictor = w_predictors[i]
                 curr_mdl_unweighted_obs_err = tf.losses.categorical_crossentropy(o_groundtruth, o_pred)
                 curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * w_predictor)
-                curr_mdl_r_err = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(tf.losses.mse(r_groundtruth, r_pred) * w_predictor)
-                curr_mdl_terminal_err = 0.01 * np.prod(self.belief_state_shape) * tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred))
+                curr_mdl_r_err = tf.reduce_mean(tf.losses.mse(r_groundtruth, r_pred) * w_predictor)
+                curr_mdl_terminal_err = tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred) * w_predictor)
                 curr_mdl_pred_err = curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
                 curr_mdl_div_loss = 0#0.002 / self.n_models * np.prod(self._h_out_shape) * tf.reduce_mean(tf.math.multiply((w_predictor + 1E-5), tf.math.log(w_predictor + 1E-5)))  # regularization to incentivize picker to not let a predictor starve
@@ -532,15 +532,18 @@ class RecurrentPredictor(keras.Model):
         self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
         self._vqvae.trainable = vqvae_is_trainable
 
-        #o_most_probable, r_most_probable, terminal_most_probable = self.most_probable_trajectories(o_predictions, r_predictions, terminal_predictions, w_predictors)
+        o_most_probable, r_most_probable, terminal_most_probable = self.most_probable_trajectories(o_predictions, r_predictions, terminal_predictions, w_predictors)
+        o_mp_err = tf.reduce_mean(tf.losses.categorical_crossentropy(o_groundtruth, o_most_probable))
+        r_mp_err = tf.reduce_mean(tf.losses.mse(r_groundtruth, r_most_probable))
+        term_mp_err = tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_most_probable))
 
         self._train_step.assign(self._train_step.value() + 1)
 
         weight_stats = {f'w{i}': tf.reduce_mean(w_predictors, axis=[1, 2])[i] for i in range(self.n_models)}
         stats = {'loss': total_loss,
-                 'o_err': total_obs_err,
-                 'r_err': total_r_err,
-                 'terminal_err': total_terminal_err,
+                 'o_err': o_mp_err, #total_obs_err,
+                 'r_err': r_mp_err, #total_r_err,
+                 'terminal_err': term_mp_err, # total_terminal_err,
                  #'diversity_loss': total_diversity_loss,
                  #'stab_loss': total_stability_loss,
                  'picker_loss': picker_loss,
@@ -549,7 +552,7 @@ class RecurrentPredictor(keras.Model):
         #misc_metrics = {name: metric.result() for name, metric in zip(self.metrics_names, self.metrics)}
         misc_metrics = {#'temp_decider': self._temp_decider(True),
                         'epsilon_decider': self._pred_exploration(True)}
-        stats.update(misc_metrics)
+        #stats.update(misc_metrics)
 
         #gc.collect()
 

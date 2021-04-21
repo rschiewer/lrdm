@@ -86,8 +86,10 @@ def plan(predictor, vae, obs_history, act_history, n_actions, plan_steps, n_roll
         per_predictor_weights.append(per_predictor)
 
     if neptune_run:
-        neptune_run[f'{env_name}/w_planning'].log(tf.reduce_mean(per_predictor_weights, axis=[0]))
-        neptune_run[f'{env_name}/best_action_sequences'].log(top_a_sequence)
+        w_per_pred = tf.reduce_mean(per_predictor_weights, axis=[0]).numpy()
+        for i_pred, w_pred in enumerate(w_per_pred):
+            neptune_run[f'{env_name}/w_planning/pred_{i_pred}'].log(w_pred)
+        neptune_run[f'{env_name}/best_action_sequence'].log(top_a_sequence[0, :, 0].numpy())
 
     return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
 
@@ -146,7 +148,7 @@ def plan_gaussian(predictor, vae, start_sample, n_actions, plan_steps, n_rollout
 
 
 def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps=1, n_rollouts=64, n_iterations=5,
-            top_perc=0.1, gamma=0.99, do_mpc=True, max_steps=100, render=False, neptune_run=None):
+            top_perc=0.1, gamma=0.99, consecutive_actions=1, max_steps=100, render=False, neptune_run=None):
     act_history = ValueHistory((), warmup_steps - 1)
     obs_history = ValueHistory(env_info['obs_shape'], warmup_steps)
     #available_actions = [1, 1, 1, 1, 1, 0, 0, 0, 0]
@@ -173,12 +175,11 @@ def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps
         if len(available_actions) == 0:
             actions = plan(predictor, vae, obs_history, act_history, env_info['n_actions'], plan_steps, n_rollouts,
                            n_iterations, top_perc, gamma, env_name, neptune_run)
-            available_actions.extend([a for a in actions.numpy()])
+            available_actions.extend([a for a in actions.numpy()[:consecutive_actions]])
+
 
         # pick first one and trash the rest if we do MPC
         action = available_actions.pop(0)
-        if do_mpc:
-            available_actions.clear()
 
         act_names = ['up', 'right', 'down', 'left', 'noop']
         print(f'action: {act_names[action]}')

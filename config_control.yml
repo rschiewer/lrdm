@@ -6,6 +6,6 @@ ctrl_n_iterations: 5
 ctrl_top_perc: 0.05
 ctrl_gamma: 0.95
 #ctrl_do_mpc: True
-ctrl_consecutive_actions: 1
+ctrl_consecutive_actions: 5
 ctrl_max_steps: 50
 ctrl_render: False

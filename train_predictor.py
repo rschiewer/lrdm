@@ -47,6 +47,7 @@ if __name__ == '__main__':
     # instantiate predictor
     pred = predictor_net(n_actions=env_info['n_actions'],
                          obs_shape=env_info['obs_shape'],
+                         n_envs=len(envs),
                          vae=vae,
                          det_filters=CONFIG.pred_det_filters,
                          prob_filters=CONFIG.pred_prob_filters,
@@ -91,7 +92,8 @@ if __name__ == '__main__':
         neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
         run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor')
-        run['predictor_params'] = pred.count_params()
+        if not CONFIG.tf_eager_mode:
+            run['predictor_params'] = pred.count_params()
         run['vae_params'] = vae.count_params()
         callbacks.append(neptune_cbk)
     else:
@@ -109,7 +111,7 @@ if __name__ == '__main__':
                        epochs=epochs,
                        batch_size=CONFIG.pred_batch_size,
                        steps_per_epoch=CONFIG.pred_n_steps_per_epoch,
-                       verbose=2,
+                       verbose=1,
                        callbacks=callbacks)
 
     if run:

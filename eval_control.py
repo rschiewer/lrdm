@@ -30,6 +30,7 @@ if __name__ == '__main__':
     # instantiate predictor
     pred = predictor_net(n_actions=env_info['n_actions'],
                          obs_shape=env_info['obs_shape'],
+                         n_envs=len(envs),
                          vae=vae,
                          det_filters=CONFIG.pred_det_filters,
                          prob_filters=CONFIG.pred_prob_filters,

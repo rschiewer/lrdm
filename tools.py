@@ -146,7 +146,7 @@ def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment
     return vae
 
 
-def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log,
+def predictor_net(n_actions, obs_shape, n_envs, vae, det_filters, prob_filters, decider_lw, n_models, tensorboard_log,
                   summary=False, tf_eager_mode=False):
     vae_index_matrix_shape = vae.compute_latent_shape(obs_shape)
     all_predictor = RecurrentPredictor(vae_index_matrix_shape, n_actions,
@@ -155,7 +155,9 @@ def predictor_net(n_actions, obs_shape, vae, det_filters, prob_filters, decider_
                                        det_filters=det_filters,
                                        prob_filters=prob_filters,
                                        decider_filters=decider_lw,
-                                       n_models=n_models, debug_log=tensorboard_log)
+                                       n_models=n_models,
+                                       n_tasks=n_envs,
+                                       debug_log=tensorboard_log)
     all_predictor.compile(optimizer=tf.optimizers.Adam())
 
     if not tf_eager_mode:

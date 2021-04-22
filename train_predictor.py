@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 import neptune.new as neptune
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
+from tensorflow.keras.callbacks import ModelCheckpoint
 import gc
 
 
@@ -74,12 +75,17 @@ if __name__ == '__main__':
         i_env = np.ones_like(i_env) * -1
 
     dataset = (tf.data.Dataset.from_tensor_slices(((enc_o, a), (enc_o_, r, done, i_env)))
-               .shuffle(100000)
+               .shuffle(1000000)
                .repeat(-1)
                .batch(CONFIG.pred_batch_size, drop_remainder=True)
                .prefetch(-1))
 
     callbacks = []
+
+    checkpoint_cbk = ModelCheckpoint(predictor_weights_path, monitor='loss', verbose=0, period=1,
+                                     save_weights_only=True, mode='min', save_best_only=True)
+    callbacks.append(checkpoint_cbk)
+
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
         neptune_cbk = NeptuneCallback(run=run, base_namespace='metrics')
@@ -106,6 +112,9 @@ if __name__ == '__main__':
                        verbose=1,
                        callbacks=callbacks)
 
+    if run:
+        run['model_weights'].upload(predictor_weights_path)
+
     # custom train loop because of memory leak in train_step, try to fix in the future
     #dset_iter = iter(dataset)
     #for epoch in range(epochs):
@@ -119,6 +128,6 @@ if __name__ == '__main__':
     #                run[k].log(v)
     #        print(train_str)
 
-    pred.save_weights(predictor_weights_path)
+    #pred.save_weights(predictor_weights_path)
     #with open(predictor_train_stats_path, 'wb') as handle:
     #    pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)

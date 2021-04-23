@@ -418,6 +418,7 @@ class RecurrentPredictor(keras.Model):
 
         if not training:
             o_predicted, r_predicted, terminal_predicted = self.most_probable_trajectories(o_predicted, r_predicted, terminal_predicted, w_predictors)
+            o_predicted = tf.argmax(o_predicted, axis=-1)
 
         return o_predicted, r_predicted, terminal_predicted, w_predictors
 

@@ -5,6 +5,7 @@ from replay_memory_tools import *
 import numpy as np
 import tensorflow as tf
 import neptune.new as neptune
+import glob
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from tensorflow.keras.callbacks import ModelCheckpoint
 import gc
@@ -114,8 +115,10 @@ if __name__ == '__main__':
                        verbose=1,
                        callbacks=callbacks)
 
+    pred.save_weights(predictor_weights_path)
     if run:
-        run['model_weights'].upload(predictor_weights_path)
+        for name in glob.glob(f'{predictor_weights_path}*'):
+            run['model_weights'].upload(name)
 
     # custom train loop because of memory leak in train_step, try to fix in the future
     #dset_iter = iter(dataset)
@@ -130,6 +133,5 @@ if __name__ == '__main__':
     #                run[k].log(v)
     #        print(train_str)
 
-    #pred.save_weights(predictor_weights_path)
     #with open(predictor_train_stats_path, 'wb') as handle:
     #    pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)

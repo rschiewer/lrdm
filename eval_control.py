@@ -59,7 +59,7 @@ if __name__ == '__main__':
             r, t = control(predictor=pred, vae=vae, env=env, env_info=env_info, env_name=name,
                            plan_steps=CONFIG.ctrl_n_plan_steps, warmup_steps=CONFIG.ctrl_n_warmup_steps,
                            n_rollouts=CONFIG.ctrl_n_rollouts, n_iterations=CONFIG.ctrl_n_iterations,
-                           top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma,
+                           top_perc=CONFIG.ctrl_top_perc, gamma=CONFIG.ctrl_gamma, action_noise=CONFIG.ctrl_act_noise,
                            consecutive_actions=CONFIG.ctrl_consecutive_actions,
                            max_steps=CONFIG.ctrl_max_steps, render=CONFIG.ctrl_render, neptune_run=run)
 

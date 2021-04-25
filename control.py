@@ -7,16 +7,13 @@ import matplotlib.animation as animation
 from replay_memory_tools import cast_and_normalize_images
 from tools import ValueHistory
 
+
 def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
          n_iterations, top_perc, gamma, action_noise, env_name, neptune_run, debug_plot=False):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
     and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
     """
-
-    #from tools import debug_visualize_observation_sequence
-    #debug_visualize_observation_sequence(obs_history.to_numpy(), interval=250)
-    #print(act_history.to_list())
 
     # add axis for batch dim when encoding
     # add axis for batch, then repeat n_rollouts times along batch dimension
@@ -40,13 +37,6 @@ def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_ac
         o_pred, r_pred, done_pred, pred_weights = predictor([o_hist, a_in])
 
         # make sure trajectory ends after reward was collected once
-        #processed_r_pred = np.zeros_like(r_pred)
-        #for i_traj in range(len(r_pred)):
-        #    if tf.reduce_sum(r_pred[i_traj]) > 1.0:
-        #        i_first_reward = np.min(np.nonzero(r_pred[i_traj] > 0.4))
-        #        processed_r_pred[i_traj, 0: i_first_reward + 1] = r_pred[i_traj, 0: i_first_reward + 1]
-        #    else:
-        #        processed_r_pred[i_traj] = r_pred[i_traj]
         done_mask = tf.concat([tf.zeros((n_rollouts, 1), dtype=tf.float32), done_pred[:, :-1, 0]], axis=1)
         discount_factors = tf.map_fn(
             lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma * (1 - elem), d_traj, initializer=1.0),
@@ -55,12 +45,6 @@ def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_ac
 
         discounted_returns = tf.reduce_sum(discount_factors * r_pred[:, :, 0], axis=1)
         #returns = tf.reduce_sum(processed_r_pred, axis=1)
-
-        # discounted returns to prefer shorter trajectories
-        #discounted_returns = tf.map_fn(
-        #    lambda r_trajectory: tf.scan(lambda cumsum, elem: cumsum + elem, r_trajectory)[-1],
-        #    r_pred * discount_factors
-        #)
 
         top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
         top_a_sequence = tf.gather(a_new, top_i_a_sequence)
@@ -187,6 +171,10 @@ def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps
     while True:
         if render:
             env.render()
+
+        # from tools import debug_visualize_observation_sequence
+        # debug_visualize_observation_sequence(obs_history.to_numpy(), interval=250)
+        # print(act_history.to_list())
 
         # propose new actions of none present
         if len(available_actions) == 0:

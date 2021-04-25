@@ -518,7 +518,7 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     ctrl_n_iterations: int = None
     ctrl_top_perc: float = None
     ctrl_gamma: float = None
-    #ctrl_do_mpc: bool = None
+    ctrl_act_noise: float = None
     ctrl_consecutive_actions: int = None
     ctrl_max_steps: int = None
     ctrl_render: bool = None

@@ -16,6 +16,8 @@ from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import *
+import multiprocessing as mp
+from itertools import chain
 
 import collections
 from collections.abc import MutableMapping
@@ -335,6 +337,72 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
     plt.show()
 
     return fig
+
+
+def find_closest_match(obs, mem_samples):
+    mem_size = len(mem_samples)
+    obs_repeated = np.repeat(obs[np.newaxis, ...], mem_size, axis=0)
+    similarity = np.abs(obs_repeated.astype(np.float32) - mem_samples.astype(np.float32))
+    per_image_similarity = np.sum(similarity, axis=(1, 2, 3))
+    best_match = np.argmin(per_image_similarity, axis=0)
+    return best_match
+
+
+def find_closest_match_tf(batch, samples_mem):
+    batch_size = tf.shape(batch)[0]
+    timesteps = tf.shape(batch)[1]
+    num_samples = tf.shape(samples_mem)[0]
+    result_batch = tf.TensorArray(tf.int64, size=batch_size, dynamic_size=False)
+    for i_b in range(batch_size):
+        result_trajectory = tf.TensorArray(tf.int64, size=timesteps, dynamic_size=False)
+        for i_t in range(timesteps):
+            obs = batch[i_b, i_t]
+            obs_repeated = tf.repeat(obs[tf.newaxis, ...], num_samples, axis=0)
+            difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem, tf.float32))
+            per_img_difference = tf.reduce_mean(difference, axis=[1, 2, 3])
+            best_match = tf.argmin(per_img_difference, axis=0)
+            result_trajectory = result_trajectory.write(i_t, best_match)
+        result_batch = result_batch.write(i_b, result_trajectory.concat())
+    return result_batch.stack()
+
+
+def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len):
+    n_envs = mem['env'].max() + 1
+    rng = np.random.default_rng()
+
+    closest_env_indices = []
+    for i_env in range(n_envs):
+        env_samples = mem[mem['env'] == i_env]
+        i_chosen = rng.integers(0, len(env_samples), batch_size)
+        chose_env_samples = env_samples[i_chosen]['s_']
+        encoded = vae.encode_to_indices(cast_and_normalize_images(chose_env_samples))
+        encoded = encoded[:, tf.newaxis, ...]  # add time dimension
+
+        actions = rng.integers(0, env_info['n_actions'], (batch_size, traj_len, 1))
+        o_rollout, r_rollout, terminals_rollout, w_predictors = pred([encoded, actions])
+        predicted_decoded = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
+
+        closest_sample_indices = find_closest_match_tf(predicted_decoded, mem['s_']).numpy()
+        indices = np.full((batch_size, traj_len), -1)
+        for i_batch in range(batch_size):
+            for i_step in range(traj_len):
+                i_mem = closest_sample_indices[i_batch, i_step]
+                indices[i_batch, i_step] = mem[i_mem]['env']
+
+        # single process
+        #indices = np.full((batch_size, traj_len), -1)
+        #for i_batch, batch in enumerate(predicted_decoded):
+        #    for i_step, step in enumerate(batch):
+        #        i_best_match = find_closest_match(step, mem['s_'])
+        #        print(i_best_match)
+        #        print(closest_sample_indices[i_batch, i_step])
+        #        env_best_match = mem[i_best_match]['env']
+        #        indices[i_batch, i_step] = env_best_match
+        #    print(f'Trajectory {i_batch} done')
+        print(f'{i_env}:\n {indices}')
+        closest_env_indices.append(indices)
+
+    return np.array(closest_env_indices)
 
 
 def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories):

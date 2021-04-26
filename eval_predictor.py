@@ -36,12 +36,22 @@ if __name__ == '__main__':
                          n_models=CONFIG.pred_n_models,
                          tensorboard_log=CONFIG.pred_tb_log,
                          summary=CONFIG.model_summaries,
-                         tf_eager_mode = CONFIG.tf_eager_mode)
+                         tf_eager_mode=CONFIG.tf_eager_mode)
     pred.load_weights(predictor_weights_path)
+
+    # prediction block diagram
+    #indices = detect_env_in_predictions(pred, vae, mix_memory, env_info, 32, 50)
+    #for i_env in range(len(indices)):
+    #    per_timestep_mean = indices[i_env].mean(axis=0)
+    #    per_timestep_std = indices[i_env].std(axis=0)
+    #    plt.errorbar(range(len(per_timestep_mean)), per_timestep_mean, yerr=per_timestep_std, label=f'env {i_env}')
+    #plt.legend()
+    #plt.show()
+    #quit()
 
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
-        run['parameters'] = {k: v for k,v in vars(CONFIG).items() if k.startswith('pred_')}
+        run['parameters'] = {k: v for k, v in vars(CONFIG).items() if k.startswith('pred_')}
         run['sys/tags'].add('predictor_performance')
         if not CONFIG.tf_eager_mode:
             run['predictor_params'] = pred.count_params()

@@ -177,13 +177,6 @@ class ReplayMemory:
     #        assert (self._data[i]['s_'] == self._data[i + 1]['s']).all() or self._data[i]['done']
 
 
-ParamsVae = namedtuple('ParamsVae', 'decay commitment_cost embedding_dim num_embeddings num_hiddens '
-                                    'num_residual_hiddens num_residual_layers batch_size')
-ParamsPredictor = namedtuple('ParamsPredictor', 'det_filters prob_filters n_models decider_lw batch_size '
-                                                'n_timesteps n_warmup_steps')
-ParamsPlanning = namedtuple('ParamsPlanning', 'ctrl_n_plan_steps ctrl_n_warmup_steps ctrl_n_rollouts '
-                                              'ctrl_n_iterations ctrl_top_perc ctrl_gamma ctrl_do_mpc '
-                                              'ctrl_max_steps ctrl_render')
 
 class SplitPlanAgent:
 
@@ -290,14 +283,11 @@ class SplitPlanAgent:
                         actions = self.plan(obs_history, act_history, self.n_actions, self.config.ctrl_n_plan_steps,
                                         self.config.ctrl_n_rollouts, self.config.ctrl_n_iterations,
                                         self.config.ctrl_top_perc, self.config.ctrl_gamma)
-                        available_actions.extend(actions.numpy().tolist())
+                        act_list = actions.numpy().tolist()
+                        available_actions.extend(act_list[0: self.config.ctrl_n_plan_steps])
 
                 # choose first action
                 action = available_actions.pop(0)
-
-                # clear remaining actions if we re-plan in every step
-                if self.config.ctrl_do_mpc:
-                    available_actions.clear()
 
                 next_obs, reward, done, info = env.step(action)
                 r_ep += reward
@@ -307,10 +297,9 @@ class SplitPlanAgent:
                 elif hasattr(env, 'agent_pos') and env.agent_pos is not None:
                     player_pos = env.agent_pos
                 else:
-                    player_pos = [-43, -42]
+                    player_pos = [-42, -42]
 
                 self.memory.add(obs_history[-1], action, reward, next_obs, done, env=i_env)
-
 
                 act_history.append(action)
                 obs_history.append(next_obs)

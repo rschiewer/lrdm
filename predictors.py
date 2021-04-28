@@ -46,7 +46,7 @@ class RecurrentPredictor(keras.Model):
 
         self.mdl_stack = []
         for i_mdl in range(n_models):
-            det_model = self._det_state(det_filters, prob_filters, n_actions, observation_shape, vqvae)
+            det_model = self._det_state(det_filters, prob_filters, n_actions, observation_shape, self.belief_state_shape, vqvae)
             params_o_model = self._gen_params_o(self.belief_state_shape, prob_filters, vqvae)
             params_r_model = self._gen_params_r(self.belief_state_shape, prob_filters)
             terminal_model = self._terminal(self.belief_state_shape, prob_filters)
@@ -168,10 +168,11 @@ class RecurrentPredictor(keras.Model):
 
         return keras.Model(inputs=in_h, outputs=x_params_o, name='p_o_model')
 
-    def _det_state(self, det_filters, prob_filters, n_actions, s_obs, vqvae):
+    def _det_state(self, det_filters, prob_filters, n_actions, s_obs, s_h, vqvae):
         # deterministic model to form state belief h_t = f(o_t-1, a_t-1, c_t-1)
         # note: h_t-1 is injected into the model not as explicit input but through previous LSTM states
         index_transform_fn = self._index_transform_fn(vqvae)
+        in_h = layers.Input((None, *s_h), name='h_h_in')
         in_o = layers.Input((None, *s_obs, vqvae.num_embeddings), name='h_o_in')
         in_a = layers.Input((None, 1), name='h_a_in')
         lstm_0_c = layers.Input((*s_obs, det_filters), name='h_lstm_0_c_in')
@@ -181,7 +182,7 @@ class RecurrentPredictor(keras.Model):
 
         o_cb_vectors = layers.Lambda(lambda inp: index_transform_fn(inp))(in_o)
         a_inflated = InflateActionLayer(s_obs, n_actions, True)(in_a)
-        h = layers.Concatenate(axis=-1)([o_cb_vectors, a_inflated])
+        h = layers.Concatenate(axis=-1)([in_h, o_cb_vectors, a_inflated])
         h = layers.TimeDistributed(layers.Conv2D(det_filters, kernel_size=4, padding='SAME', activation=None))(h)
         h = layers.ReLU()(h)
         #h = layers.TimeDistributed(layers.LayerNormalization(axis=(-1, -2, -3)))(h)
@@ -191,7 +192,7 @@ class RecurrentPredictor(keras.Model):
         h, *h_states_1 = layers.ConvLSTM2D(det_filters, kernel_size=3, return_state=True, return_sequences=True, padding='SAME', name='h_rec_1')(h, initial_state=[lstm_1_c, lstm_1_h])
         h = layers.TimeDistributed(layers.Conv2D(prob_filters, kernel_size=3, padding='SAME', activation=None))(h)
 
-        return keras.Model(inputs=[in_o, in_a, lstm_0_c, lstm_0_h, lstm_1_c, lstm_1_h], outputs=[h, h_states_0, h_states_1], name='h_model')
+        return keras.Model(inputs=[in_h, in_o, in_a, lstm_0_c, lstm_0_h, lstm_1_c, lstm_1_h], outputs=[h, h_states_0, h_states_1], name='h_model')
 
     def _index_transform_fn(self, vqvae):
         if self.straight_through_gradient:
@@ -311,10 +312,11 @@ class RecurrentPredictor(keras.Model):
                           tf.zeros((n_batch, *self._decider_lstm_shape), dtype=tf.float32)]
         o_pred = tf.zeros((self.n_models, n_batch, 1, *self.s_obs, self._vae_n_embeddings))
         w_pred = tf.fill((n_batch, 1, self.n_tasks), 1.0 / len(self.mdl_stack))
-        model_h = tf.zeros((n_batch, 1, *self.belief_state_shape))
+        h_pred = tf.zeros((self.n_models, n_batch, 1, *self.belief_state_shape))
 
         # rollout start
         for i_t in range(n_predict):
+            h_step = tf.TensorArray(tf.float32, size=n_models)
             o_step = tf.TensorArray(tf.float32, size=n_models)
             r_step = tf.TensorArray(tf.float32, size=n_models)
             terminal_step = tf.TensorArray(tf.float32, size=n_models)
@@ -326,20 +328,29 @@ class RecurrentPredictor(keras.Model):
 
             # do predictions with all predictors
             for i_m, (h_mdl, params_o_mdl, params_r_mdl, terminal_mdl) in enumerate(self.mdl_stack):
-                o_pred_mdl, r_pred_mdl, terminal_pred_mdl, model_h, model_h_state_0, model_h_state_1 = self._open_loop_step(h_mdl, params_o_mdl, params_r_mdl, terminal_mdl, o_next, a_next, states_h_0[i_m], states_h_1[i_m], training)
+                o_pred_mdl, r_pred_mdl, terminal_pred_mdl, h_pred_mdl, model_h_state_0, model_h_state_1 =\
+                    self._open_loop_step(h_mdl, params_o_mdl, params_r_mdl, terminal_mdl, h_pred[i_m], o_next,
+                                         a_next, states_h_0[i_m], states_h_1[i_m], training)
 
                 o_step = o_step.write(i_m, o_pred_mdl)
                 r_step = r_step.write(i_m, r_pred_mdl)
                 terminal_step = terminal_step.write(i_m, terminal_pred_mdl)
                 states_h_0_step = states_h_0_step.write(i_m, model_h_state_0)
                 states_h_1_step = states_h_1_step.write(i_m, model_h_state_1)
+                h_step = h_step.write(i_m, h_pred_mdl)
+
+            h_pred = h_step.stack()
+            o_pred = o_step.stack()
+            r_pred = r_step.stack()
+            terminal_pred = terminal_step.stack()
+            states_h_0 = states_h_0_step.stack()
+            states_h_1 = states_h_1_step.stack()
 
             # pick a predictor given current observation
             if self.n_models > 1:
                 params_decider, states_decider = self.params_decider([o_next, a_next, states_decider[0], states_decider[1]])
             else:
-                params_decider, states_decider = self.params_decider([model_h, a_next, states_decider[0], states_decider[1]])
-
+                params_decider, states_decider = self.params_decider([h_pred[0], a_next, states_decider[0], states_decider[1]])
             params_decider = params_decider[:, 0, tf.newaxis, :]  # make tensor shape explicit (None, 1, n_models) for autograph
             #w_pred = tfd.RelaxedOneHotCategorical(self._temp_decider(training), params_decider).sample()
             #w_pred = tfd.RelaxedOneHotCategorical(1, logits=params_decider).sample()
@@ -349,12 +360,6 @@ class RecurrentPredictor(keras.Model):
             #    w_pred = tf.random.uniform(shp)
             #    w_pred /= tf.reduce_sum(w_pred, axis=1, keepdims=True)
             #    w_pred = w_pred[:, tf.newaxis, :]
-
-            o_pred = o_step.stack()
-            r_pred = r_step.stack()
-            terminal_pred = terminal_step.stack()
-            states_h_0 = states_h_0_step.stack()
-            states_h_1 = states_h_1_step.stack()
 
             o_predictions = o_predictions.write(i_t, o_pred)
             r_predictions = r_predictions.write(i_t, r_pred)
@@ -384,14 +389,14 @@ class RecurrentPredictor(keras.Model):
         return o_predictions_tr, r_predictions_tr, terminal_predictions_tr, w_predictors_tr
 
     @tf.function
-    def _open_loop_step(self, det_model, params_o_model, params_r_model, terminal_mdl, o_inp, a_inp, states_h_0, states_h_1, training):
-        h, states_h_0, states_h_1 = det_model([o_inp, a_inp, states_h_0[0], states_h_0[1], states_h_1[0], states_h_1[1]], training=training)
+    def _open_loop_step(self, det_model, params_o_model, params_r_model, terminal_mdl, h_inp, o_inp, a_inp, states_h_0, states_h_1, training):
+        h, states_h_0, states_h_1 = det_model([h_inp, o_inp, a_inp, states_h_0[0], states_h_0[1], states_h_1[0], states_h_1[1]], training=training)
         params_o = params_o_model(h, training=training)
         params_r = params_r_model(h, training=training)
 
         #o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
         if training:
-            o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
+            o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
         else:
             most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
             o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32)

@@ -394,18 +394,12 @@ class RecurrentPredictor(keras.Model):
         params_o = params_o_model(h, training=training)
         params_r = params_r_model(h, training=training)
 
-        #o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
         if training:
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
-        else:
-            most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
-            o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32)
-        #indices = tf.argmax(o_pred, axis=-1)
-        #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
-
-        if training:
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
         else:
+            most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
+            o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32) # + tf.stop_gradient(o_pred) - o_pred
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).mode()
 
         terminal_pred = terminal_mdl(h, training=training)
@@ -937,13 +931,12 @@ class RecurrentPredictor2(keras.Model):
         params_o = params_o_model(h, training=training)
         params_r = params_r_model(h, training=training)
 
-        o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), params_o).sample()
-        #indices = tf.argmax(o_pred, axis=-1)
-        #o_pred = tf.one_hot(indices, self._vae_n_embeddings, dtype=tf.float32) + tf.stop_gradient(o_pred) - o_pred
-
         if training:
+            o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
         else:
+            most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
+            o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32)
             r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).mode()
 
         terminal_pred = terminal_mdl(h, training=training)

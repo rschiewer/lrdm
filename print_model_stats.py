@@ -22,7 +22,8 @@ if __name__ == '__main__':
                      train_data_var=train_data_var,
                      commitment_cost=CONFIG.vae_commitment_cost,
                      frame_stack=CONFIG.vae_frame_stack,
-                     summary=True)
+                     summary=True,
+                     tf_eager_mode=CONFIG.tf_eager_mode)
 
     # instantiate predictor
     pred = predictor_net(n_actions=env_info['n_actions'],

@@ -25,7 +25,8 @@ if __name__ == '__main__':
                      train_data_var=train_data_var,
                      commitment_cost=CONFIG.vae_commitment_cost,
                      frame_stack=CONFIG.vae_frame_stack,
-                     summary=CONFIG.model_summaries)
+                     summary=CONFIG.model_summaries,
+                     tf_eager_mode=CONFIG.tf_eager_mode)
 
     if vae.frame_stack == 1:
         all_observations = line_up_observations(mix_memory)

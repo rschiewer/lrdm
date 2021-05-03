@@ -72,8 +72,8 @@ class ExponentialMovingAverage(tfkl.Layer):
 
     def initialize(self, value: tf.Tensor):
         self.initialized.assign(True)
-        self._hidden = tf.Variable(tf.zeros_like(value), trainable=False, name="hidden")
-        self.average = tf.Variable(tf.zeros_like(value), trainable=False, name="average")
+        self._hidden = tf.Variable(tf.zeros_like(value, dtype=tf.float32), trainable=False, name="hidden")
+        self.average = tf.Variable(tf.zeros_like(value, dtype=tf.float32), trainable=False, name="average")
 
 
 class QuantizationLayerEMA(tfkl.Layer):

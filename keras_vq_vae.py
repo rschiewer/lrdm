@@ -283,7 +283,7 @@ class ResidualStackLayer(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._layers = []
+        self._res_stacks = []
         for i in range(num_residual_layers):
             conv3 = tfkl.Conv2D(
                 filters=num_residual_hiddens,
@@ -291,22 +291,24 @@ class ResidualStackLayer(tfkl.Layer):
                 strides=(1, 1),
                 padding='same',
                 name="res3x3_%d" % i)
+            conv3_act = tfkl.ReLU()
             conv1 = tfkl.Conv2D(
                 filters=num_hiddens,
                 kernel_size=(1, 1),
                 strides=(1, 1),
                 padding='same',
                 name="res1x1_%d" % i)
-            self._layers.append((conv3, conv1))
+            conv1_act = tfkl.ReLU()
+            self._res_stacks.append((conv3, conv3_act, conv1, conv1_act))
+        self._final_act = tfkl.ReLU()
 
     def call(self, inputs, training=None, **kwargs):
         h = inputs
-        for conv3, conv1 in self._layers:
-            #h_out = tf.keras.layers.ReLu()(h)
-            conv3_out = conv3(tf.nn.relu(h))
-            conv1_out = conv1(tf.nn.relu(conv3_out))
+        for conv3, conv3_act, conv1, conv1_act in self._res_stacks:
+            conv3_out = conv3(conv3_act(h))
+            conv1_out = conv1(conv1_act(conv3_out))
             h += conv1_out
-        return tf.nn.relu(h)  # Resnet V1 style
+        return self._final_act(h)  # Resnet V1 style
 
 
 class Encoder(tfkl.Layer):
@@ -317,33 +319,36 @@ class Encoder(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._enc_1 = tfkl.Conv2D(
+        self._enc1 = tfkl.Conv2D(
             filters=self._num_hiddens // 2,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="enc_1")
-        self._enc_2 = tfkl.Conv2D(
+        self._enc1_act = tfkl.ReLU()
+        self._enc2 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="enc_2")
-        self._enc_3 = tfkl.Conv2D(
+        self._enc2_act = tfkl.ReLU()
+        self._enc3 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding='same',
             name="enc_3")
+        self._enc3_act = tfkl.ReLU()
         self._residual_stack = ResidualStackLayer(
             self._num_hiddens,
             self._num_residual_layers,
             self._num_residual_hiddens)
 
     def call(self, x, training=None, **kwargs):
-        h = tf.nn.relu(self._enc_1(x))
-        h = tf.nn.relu(self._enc_2(h))
-        h = tf.nn.relu(self._enc_3(h))
+        h = self._enc1_act(self._enc1(x))
+        h = self._enc2_act(self._enc2(h))
+        h = self._enc3_act(self._enc3(h))
         return self._residual_stack(h)
 
 
@@ -355,28 +360,30 @@ class Decoder(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._dec_1 = tfkl.Conv2D(
+        self._dec1 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding='same',
             name="dec_1")
-        self._residual_stack = ResidualStackLayer(
-            self._num_hiddens,
-            self._num_residual_layers,
-            self._num_residual_hiddens)
-        self._dec_2 = tfkl.Conv2DTranspose(
+        self._dec1_act = tfkl.ReLU()
+        self._dec2 = tfkl.Conv2DTranspose(
             filters=self._num_hiddens // 2,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="dec_2")
-        self._dec_3 = tfkl.Conv2DTranspose(
+        self._dec2_act = tfkl.ReLU()
+        self._dec3 = tfkl.Conv2DTranspose(
             filters=3,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="dec_3")
+        self._residual_stack = ResidualStackLayer(
+            self._num_hiddens,
+            self._num_residual_layers,
+            self._num_residual_hiddens)
 
     def call(self, x, training=None, **kwargs):
         s_in = x.get_shape().as_list()
@@ -386,10 +393,10 @@ class Decoder(tfkl.Layer):
 
         x_flat = tf.reshape(x, (-1, s_in[-3], s_in[-2], s_in[-1]))  # conv2DTranspose must have 4D input
 
-        h = self._dec_1(x_flat)
+        h = self._dec1(x_flat)  # original implementation does not use activation function on first conv layer
         h = self._residual_stack(h)
-        h = tf.nn.relu(self._dec_2(h))
-        x_recon = self._dec_3(h)
+        h = self._dec2_act(self._dec2(h))
+        x_recon = self._dec3(h)
 
         s_rec = x_recon.get_shape().as_list()
         if len(s_in) == 5:
@@ -397,10 +404,10 @@ class Decoder(tfkl.Layer):
         return x_recon
 
     def call_no_reshape(self, x, training=None, **kwargs):
-        h = self._dec_1(x)
+        h = self._dec1(x)  # original implementation does not use activation function on first conv layer
         h = self._residual_stack(h)
-        h = tf.nn.relu(self._dec_2(h))
-        x_recon = self._dec_3(h)
+        h = self._dec2_act(self._dec2(h))
+        x_recon = self._dec3(h)
         return x_recon
 
 

@@ -230,7 +230,7 @@ class QuantizationLayerEMA(tfkl.Layer):
         self.add_metric(perplexity, 'perplexity')
         self.add_metric(distances, 'distances')
 
-        return quantized
+        return quantized, tf.one_hot(encoding_indices, self.num_embeddings, axis=-1)
 
     def encode_to_indices(self, inputs):
         flat_inputs = tf.reshape(inputs, [-1, self.embedding_dim])
@@ -302,6 +302,7 @@ class ResidualStackLayer(tfkl.Layer):
     def call(self, inputs, training=None, **kwargs):
         h = inputs
         for conv3, conv1 in self._layers:
+            #h_out = tf.keras.layers.ReLu()(h)
             conv3_out = conv3(tf.nn.relu(h))
             conv1_out = conv1(tf.nn.relu(conv3_out))
             h += conv1_out
@@ -447,7 +448,7 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
     def call(self, inputs, training=None, **kwargs):
         z = self._pre_vq_conv1(self._encoder(inputs))
-        vq_output = self._vqvae(z, training=training)
+        vq_output, _ = self._vqvae(z, training=training)
         x_recon = self._decode(vq_output)
         #recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
         #self.add_metric(recon_error, 'reconstruction_loss')

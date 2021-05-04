@@ -1,5 +1,5 @@
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Union, List
 
@@ -16,12 +16,7 @@ from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import *
-import multiprocessing as mp
-from itertools import chain
 
-import collections
-from collections.abc import MutableMapping
-import copy
 from gym import spaces
 from gym import ObservationWrapper
 import cv2
@@ -133,14 +128,16 @@ def gen_environments(test_setting):
     return env_names, environments, env_info
 
 
-def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment_cost, frame_stack=1, summary=False):
+def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment_cost, frame_stack=1, summary=False,
+               tf_eager_mode=False):
     assert frame_stack == 1, 'No frame stacking supported currently'
     grayscale_input = obs_shape[-1] == 1
     vae = VectorQuantizerEMAKeras(train_data_var, commitment_cost=commitment_cost, num_embeddings=n_embeddings,
                                   embedding_dim=d_embeddings, grayscale_input=grayscale_input)
     vae.compile(optimizer=tf.optimizers.Adam())
 
-    vae.build((None, *obs_shape))
+    if not tf_eager_mode:
+        vae.build((None, *obs_shape))
 
     if summary:
         vae.summary()
@@ -509,12 +506,6 @@ class NeptuneEpochCallback(NeptuneCallback):
         pass
 
 
-"""An observation wrapper that augments observations by pixel values."""
-
-
-
-
-
 class MultiYamlDataClassConfig(YamlDataClassConfig):
 
     def load(self, file_paths: Union[Path, str, List[Path], List[str]] = None, path_is_absolute: bool = False):
@@ -534,6 +525,21 @@ class MultiYamlDataClassConfig(YamlDataClassConfig):
         for file_path in file_paths:
             dict_config.update(yaml.full_load(Path(file_path).read_text('UTF-8')))
         self.__dict__.update(self.__class__.schema().load(dict_config).__dict__)
+
+
+class SideloadConfigsMixin(YamlDataClassConfig):
+
+    def load(self, path: Union[Path, str] = None, path_is_absolute: bool = False):
+        super(SideloadConfigsMixin, self).load(path, path_is_absolute)
+        for fld in fields(self):
+            path = getattr(self, fld.name)
+            print(f'{fld.name}: {path}')
+        print('================')
+        for fld in fields(self):
+            if fld.name is not None and fld.name.startswith('config_') and fld.name.endswith('_path'):
+                path = getattr(self, fld.name)
+                print(f'{fld.name}: {path}')
+                super(SideloadConfigsMixin, self).load(path, False)
 
 
 @dataclass

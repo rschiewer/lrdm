@@ -22,7 +22,8 @@ if __name__ == '__main__':
                      train_data_var=train_data_var,
                      commitment_cost=CONFIG.vae_commitment_cost,
                      frame_stack=CONFIG.vae_frame_stack,
-                     summary=CONFIG.model_summaries)
+                     summary=CONFIG.model_summaries,
+                     tf_eager_mode=CONFIG.tf_eager_mode)
 
     load_vae_weights(vae=vae, weights_path=vae_weights_path, train_stats_path=vae_train_stats_path,
                      plot_training=False, test_memory=mix_memory)

@@ -27,7 +27,7 @@ class ExponentialMovingAverage(tfkl.Layer):
         value is passed.
     """
 
-    def __init__(self, decay, name=None):
+    def __init__(self, decay, init_val=None, name=None):
         """Creates a debiased moving average module.
 
         Args:
@@ -43,6 +43,8 @@ class ExponentialMovingAverage(tfkl.Layer):
         self._hidden = None
         self.average = None
         self.initialized = tf.Variable(False, dtype=tf.bool, trainable=False, name='initialized')
+        if init_val:
+            self.initialize(init_val)
 
     def call(self, value, training=None, **kwargs):
         """Updates the metric and returns the new value."""
@@ -72,8 +74,8 @@ class ExponentialMovingAverage(tfkl.Layer):
 
     def initialize(self, value: tf.Tensor):
         self.initialized.assign(True)
-        self._hidden = tf.Variable(tf.zeros_like(value), trainable=False, name="hidden")
-        self.average = tf.Variable(tf.zeros_like(value), trainable=False, name="average")
+        self._hidden = tf.Variable(tf.zeros_like(value, dtype=tf.float32), trainable=False, name="hidden")
+        self.average = tf.Variable(tf.zeros_like(value, dtype=tf.float32), trainable=False, name="average")
 
 
 class QuantizationLayerEMA(tfkl.Layer):
@@ -230,7 +232,7 @@ class QuantizationLayerEMA(tfkl.Layer):
         self.add_metric(perplexity, 'perplexity')
         self.add_metric(distances, 'distances')
 
-        return quantized
+        return quantized, tf.one_hot(encoding_indices, self.num_embeddings, axis=-1), latent_loss
 
     def encode_to_indices(self, inputs):
         flat_inputs = tf.reshape(inputs, [-1, self.embedding_dim])
@@ -283,7 +285,7 @@ class ResidualStackLayer(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._layers = []
+        self._res_stacks = []
         for i in range(num_residual_layers):
             conv3 = tfkl.Conv2D(
                 filters=num_residual_hiddens,
@@ -291,21 +293,24 @@ class ResidualStackLayer(tfkl.Layer):
                 strides=(1, 1),
                 padding='same',
                 name="res3x3_%d" % i)
+            conv3_act = tfkl.ReLU()
             conv1 = tfkl.Conv2D(
                 filters=num_hiddens,
                 kernel_size=(1, 1),
                 strides=(1, 1),
                 padding='same',
                 name="res1x1_%d" % i)
-            self._layers.append((conv3, conv1))
+            conv1_act = tfkl.ReLU()
+            self._res_stacks.append((conv3, conv3_act, conv1, conv1_act))
+        self._final_act = tfkl.ReLU()
 
     def call(self, inputs, training=None, **kwargs):
         h = inputs
-        for conv3, conv1 in self._layers:
-            conv3_out = conv3(tf.nn.relu(h))
-            conv1_out = conv1(tf.nn.relu(conv3_out))
+        for conv3, conv3_act, conv1, conv1_act in self._res_stacks:
+            conv3_out = conv3(conv3_act(h))
+            conv1_out = conv1(conv1_act(conv3_out))
             h += conv1_out
-        return tf.nn.relu(h)  # Resnet V1 style
+        return self._final_act(h)  # Resnet V1 style
 
 
 class Encoder(tfkl.Layer):
@@ -316,33 +321,36 @@ class Encoder(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._enc_1 = tfkl.Conv2D(
+        self._enc1 = tfkl.Conv2D(
             filters=self._num_hiddens // 2,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="enc_1")
-        self._enc_2 = tfkl.Conv2D(
+        self._enc1_act = tfkl.ReLU()
+        self._enc2 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="enc_2")
-        self._enc_3 = tfkl.Conv2D(
+        self._enc2_act = tfkl.ReLU()
+        self._enc3 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding='same',
             name="enc_3")
+        self._enc3_act = tfkl.ReLU()
         self._residual_stack = ResidualStackLayer(
             self._num_hiddens,
             self._num_residual_layers,
             self._num_residual_hiddens)
 
     def call(self, x, training=None, **kwargs):
-        h = tf.nn.relu(self._enc_1(x))
-        h = tf.nn.relu(self._enc_2(h))
-        h = tf.nn.relu(self._enc_3(h))
+        h = self._enc1_act(self._enc1(x))
+        h = self._enc2_act(self._enc2(h))
+        h = self._enc3_act(self._enc3(h))
         return self._residual_stack(h)
 
 
@@ -354,28 +362,30 @@ class Decoder(tfkl.Layer):
         self._num_residual_layers = num_residual_layers
         self._num_residual_hiddens = num_residual_hiddens
 
-        self._dec_1 = tfkl.Conv2D(
+        self._dec1 = tfkl.Conv2D(
             filters=self._num_hiddens,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding='same',
             name="dec_1")
-        self._residual_stack = ResidualStackLayer(
-            self._num_hiddens,
-            self._num_residual_layers,
-            self._num_residual_hiddens)
-        self._dec_2 = tfkl.Conv2DTranspose(
+        self._dec1_act = tfkl.ReLU()
+        self._dec2 = tfkl.Conv2DTranspose(
             filters=self._num_hiddens // 2,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="dec_2")
-        self._dec_3 = tfkl.Conv2DTranspose(
+        self._dec2_act = tfkl.ReLU()
+        self._dec3 = tfkl.Conv2DTranspose(
             filters=3,
             kernel_size=(4, 4),
             strides=(2, 2),
             padding='same',
             name="dec_3")
+        self._residual_stack = ResidualStackLayer(
+            self._num_hiddens,
+            self._num_residual_layers,
+            self._num_residual_hiddens)
 
     def call(self, x, training=None, **kwargs):
         s_in = x.get_shape().as_list()
@@ -385,10 +395,10 @@ class Decoder(tfkl.Layer):
 
         x_flat = tf.reshape(x, (-1, s_in[-3], s_in[-2], s_in[-1]))  # conv2DTranspose must have 4D input
 
-        h = self._dec_1(x_flat)
+        h = self._dec1(x_flat)  # original implementation does not use activation function on first conv layer
         h = self._residual_stack(h)
-        h = tf.nn.relu(self._dec_2(h))
-        x_recon = self._dec_3(h)
+        h = self._dec2_act(self._dec2(h))
+        x_recon = self._dec3(h)
 
         s_rec = x_recon.get_shape().as_list()
         if len(s_in) == 5:
@@ -396,10 +406,10 @@ class Decoder(tfkl.Layer):
         return x_recon
 
     def call_no_reshape(self, x, training=None, **kwargs):
-        h = self._dec_1(x)
+        h = self._dec1(x)  # original implementation does not use activation function on first conv layer
         h = self._residual_stack(h)
-        h = tf.nn.relu(self._dec_2(h))
-        x_recon = self._dec_3(h)
+        h = self._dec2_act(self._dec2(h))
+        x_recon = self._dec3(h)
         return x_recon
 
 
@@ -447,7 +457,7 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
     def call(self, inputs, training=None, **kwargs):
         z = self._pre_vq_conv1(self._encoder(inputs))
-        vq_output = self._vqvae(z, training=training)
+        vq_output, _, _ = self._vqvae(z, training=training)
         x_recon = self._decode(vq_output)
         #recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
         #self.add_metric(recon_error, 'reconstruction_loss')

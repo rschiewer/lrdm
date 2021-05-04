@@ -85,7 +85,7 @@ if __name__ == '__main__':
     callbacks = []
 
     checkpoint_cbk = ModelCheckpoint(predictor_weights_path, monitor='loss', verbose=0, period=1,
-                                     save_weights_only=True, mode='min', save_best_only=True)
+                                     save_weights_only=True, save_best_only=True)
     callbacks.append(checkpoint_cbk)
 
     if CONFIG.neptune_project_name:
@@ -115,7 +115,7 @@ if __name__ == '__main__':
                        verbose=1,
                        callbacks=callbacks)
 
-    pred.save_weights(predictor_weights_path)
+    #pred.save_weights(predictor_weights_path)
     if run:
         for name in glob.glob(f'{predictor_weights_path}*'):
             run['model_weights'].upload(name)

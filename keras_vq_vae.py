@@ -27,7 +27,7 @@ class ExponentialMovingAverage(tfkl.Layer):
         value is passed.
     """
 
-    def __init__(self, decay, name=None):
+    def __init__(self, decay, init_val=None, name=None):
         """Creates a debiased moving average module.
 
         Args:
@@ -43,6 +43,8 @@ class ExponentialMovingAverage(tfkl.Layer):
         self._hidden = None
         self.average = None
         self.initialized = tf.Variable(False, dtype=tf.bool, trainable=False, name='initialized')
+        if init_val:
+            self.initialize(init_val)
 
     def call(self, value, training=None, **kwargs):
         """Updates the metric and returns the new value."""
@@ -230,7 +232,7 @@ class QuantizationLayerEMA(tfkl.Layer):
         self.add_metric(perplexity, 'perplexity')
         self.add_metric(distances, 'distances')
 
-        return quantized, tf.one_hot(encoding_indices, self.num_embeddings, axis=-1)
+        return quantized, tf.one_hot(encoding_indices, self.num_embeddings, axis=-1), latent_loss
 
     def encode_to_indices(self, inputs):
         flat_inputs = tf.reshape(inputs, [-1, self.embedding_dim])
@@ -455,7 +457,7 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
 
     def call(self, inputs, training=None, **kwargs):
         z = self._pre_vq_conv1(self._encoder(inputs))
-        vq_output, _ = self._vqvae(z, training=training)
+        vq_output, _, _ = self._vqvae(z, training=training)
         x_recon = self._decode(vq_output)
         #recon_error = tf.reduce_mean((x_recon - inputs) ** 2) / self._data_variance
         #self.add_metric(recon_error, 'reconstruction_loss')

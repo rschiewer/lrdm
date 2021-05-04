@@ -345,25 +345,27 @@ def find_closest_match(obs, mem_samples):
     return best_match
 
 
-def find_closest_match_tf(batch, samples_mem):
+def find_closest_match_tf(batch, samples_mem, max_diff=0.01):
     batch_size = tf.shape(batch)[0]
     timesteps = tf.shape(batch)[1]
     num_samples = tf.shape(samples_mem)[0]
-    result_batch = tf.TensorArray(tf.int64, size=batch_size, dynamic_size=False)
+    result_batch = tf.TensorArray(tf.int32, size=batch_size, dynamic_size=False)
     for i_b in range(batch_size):
-        result_trajectory = tf.TensorArray(tf.int64, size=timesteps, dynamic_size=False)
+        result_trajectory = tf.TensorArray(tf.int32, size=timesteps, dynamic_size=False)
         for i_t in range(timesteps):
             obs = batch[i_b, i_t]
             obs_repeated = tf.repeat(obs[tf.newaxis, ...], num_samples, axis=0)
             difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem, tf.float32))
-            per_img_difference = tf.reduce_mean(difference, axis=[1, 2, 3])
-            best_match = tf.argmin(per_img_difference, axis=0)
-            result_trajectory = result_trajectory.write(i_t, best_match)
+            per_img_diff = tf.reduce_mean(difference, axis=[1, 2, 3]) / 255.0
+            best_match = tf.argmin(per_img_diff, axis=0)
+            if per_img_diff[best_match] > max_diff:
+                best_match = -1
+            result_trajectory = result_trajectory.write(i_t, tf.cast(best_match, dtype=tf.int32))
         result_batch = result_batch.write(i_b, result_trajectory.concat())
     return result_batch.stack()
 
 
-def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len):
+def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, max_diff):
     n_envs = mem['env'].max() + 1
     rng = np.random.default_rng()
 
@@ -379,7 +381,7 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len):
         o_rollout, r_rollout, terminals_rollout, w_predictors = pred([encoded, actions])
         predicted_decoded = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
 
-        closest_sample_indices = find_closest_match_tf(predicted_decoded, mem['s_']).numpy()
+        closest_sample_indices = find_closest_match_tf(predicted_decoded, mem['s_'], max_diff).numpy()
         indices = np.full((batch_size, traj_len), -1)
         for i_batch in range(batch_size):
             for i_step in range(traj_len):
@@ -396,7 +398,8 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len):
         #        env_best_match = mem[i_best_match]['env']
         #        indices[i_batch, i_step] = env_best_match
         #    print(f'Trajectory {i_batch} done')
-        print(f'{i_env}:\n {indices}')
+        #indices = tf.one_hot(indices, n_envs, axis=-1)
+        #print(f'{i_env}:\n {indices}')
         closest_env_indices.append(indices)
 
     return np.array(closest_env_indices)

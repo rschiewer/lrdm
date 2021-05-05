@@ -78,7 +78,7 @@ if __name__ == '__main__':
         i_env = np.ones_like(i_env) * -1
 
     dataset = (tf.data.Dataset.from_tensor_slices(((enc_o, a), (enc_o_, r, done, i_env)))
-               .shuffle(500000)
+               .shuffle(5000000)
                .repeat(-1)
                .batch(CONFIG.pred_batch_size, drop_remainder=True)
                .prefetch(-1))

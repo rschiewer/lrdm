@@ -2,7 +2,7 @@ pred_n_train_steps: 8000
 pred_n_steps_per_epoch: 50
 pred_n_trajectories: 6000
 pred_n_traj_steps: 30
-pred_n_warmup_steps: 10
+pred_n_warmup_steps: 5
 pred_pad_trajectories: True
 pred_det_filters: 74
 pred_prob_filters: 64

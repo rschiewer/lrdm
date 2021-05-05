@@ -386,7 +386,8 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
         for i_batch in range(batch_size):
             for i_step in range(traj_len):
                 i_mem = closest_sample_indices[i_batch, i_step]
-                indices[i_batch, i_step] = mem[i_mem]['env']
+                if i_mem != -1:
+                    indices[i_batch, i_step] = mem[i_mem]['env']
 
         # single process
         #indices = np.full((batch_size, traj_len), -1)

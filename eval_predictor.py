@@ -1,8 +1,9 @@
-from replay_memory_tools import *
 from tools import *
 from project_init import *
 from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path
 import neptune.new as neptune
+from tools import plot_env_per_sample
+
 
 if __name__ == '__main__':
     env_names, envs, env_info = gen_environments(CONFIG.env_setting)
@@ -41,14 +42,8 @@ if __name__ == '__main__':
     pred.load_weights(predictor_weights_path)
 
     # prediction block diagram
-    #indices = detect_env_in_predictions(pred, vae, mix_memory, env_info, 32, 50)
-    #for i_env in range(len(indices)):
-    #    per_timestep_mean = indices[i_env].mean(axis=0)
-    #    per_timestep_std = indices[i_env].std(axis=0)
-    #    plt.errorbar(range(len(per_timestep_mean)), per_timestep_mean, yerr=per_timestep_std, label=f'env {i_env}')
-    #plt.legend()
-    #plt.show()
-    #quit()
+    plot_env_per_sample(pred, vae, mix_memory, env_info, n_trajs=64, n_time_steps=50, max_diff=0.1)
+    quit()
 
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)

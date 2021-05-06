@@ -6,12 +6,14 @@ from typing import Union, List
 import blockworld
 import gym
 import gym_minigrid
+import numpy
 import numpy as np
 import tensorflow as tf
 import yaml
-from matplotlib import pyplot as plt, animation
+from matplotlib import pyplot as plt, animation, pyplot
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
+
 from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
@@ -382,6 +384,7 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
     condensed_mem = condense_places_in_mem(mem)
 
     closest_env_indices = []
+    env_weights = []
     for i_env in range(n_envs):
         env_samples = condensed_mem[condensed_mem['env'] == i_env]
         i_chosen = rng.integers(0, len(env_samples), batch_size)
@@ -414,8 +417,36 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
         #indices = tf.one_hot(indices, n_envs, axis=-1)
         #print(f'{i_env}:\n {indices}')
         closest_env_indices.append(indices)
+        env_weights.append(tf.transpose(w_predictors, [1, 2, 0]))
 
-    return np.array(closest_env_indices)
+    return np.array(closest_env_indices), np.array(env_weights)
+
+
+def plot_env_per_sample(pred, vae, mix_memory, env_info, n_trajs, n_time_steps, max_diff):
+    indices, weights = detect_env_in_predictions(pred, vae, mix_memory, env_info, n_trajs, n_time_steps, max_diff=max_diff)
+    n_envs = len(indices)
+    timestep_labels = range(len(indices[0, 0]))
+    bar_width = 0.5
+    for i_env in range(n_envs):
+        def count_indices_per_step(indices, n_envs):
+            time_steps = indices.shape[1]
+            indices_per_step = np.zeros((time_steps, n_envs + 1))
+            for i_t in range(time_steps):
+                cur_step = indices[:, i_t]
+                for i_env in range(n_envs):
+                    indices_per_step[i_t, i_env] += np.count_nonzero(cur_step == i_env)
+                indices_per_step[i_t, -1] += np.count_nonzero(cur_step == -1)
+            return indices_per_step
+
+        per_timestep = count_indices_per_step(indices[i_env], n_envs)
+        for plot_i_env in range(n_envs):
+            bottom = per_timestep[:, 0:plot_i_env].sum(axis=1)
+            plt.bar(timestep_labels, per_timestep[:, plot_i_env], bar_width, bottom=bottom, label=plot_i_env)
+        bottom = per_timestep[:, 0:-1].sum(axis=1)
+        plt.bar(timestep_labels, per_timestep[:, -1], bar_width, bottom=bottom, label='undefined')
+        plt.ylim(bottom=0, top=indices.shape[1] + 1)
+        plt.legend()
+        plt.show()
 
 
 def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories):
@@ -614,3 +645,4 @@ class ExperimentConfig(MultiYamlDataClassConfig):
     ctrl_render: bool = None
 
     #FILE_PATH: Path = create_file_path_field(Path(__file__).parent / 'config_general.yml')
+

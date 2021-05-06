@@ -96,7 +96,7 @@ if __name__ == '__main__':
         run['sys/tags'].add('predictor')
         if not CONFIG.tf_eager_mode:
             run['predictor_params'] = pred.count_params()
-        run['vae_params'] = vae.count_params()
+            run['vae_params'] = vae.count_params()
         callbacks.append(neptune_cbk)
     else:
         run = None

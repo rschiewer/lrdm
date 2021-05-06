@@ -365,13 +365,25 @@ def find_closest_match_tf(batch, samples_mem, max_diff=0.01):
     return result_batch.stack()
 
 
+def condense_places_in_mem(mem):
+    present_locations = set()
+    i_result = []
+    for i, sample in enumerate(mem):
+        pos_in_env = (sample['env'], *sample['pos'])
+        if pos_in_env not in present_locations:
+            present_locations.add(pos_in_env)
+            i_result.append(i)
+    return mem[i_result]
+
+
 def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, max_diff):
     n_envs = mem['env'].max() + 1
     rng = np.random.default_rng()
+    condensed_mem = condense_places_in_mem(mem)
 
     closest_env_indices = []
     for i_env in range(n_envs):
-        env_samples = mem[mem['env'] == i_env]
+        env_samples = condensed_mem[condensed_mem['env'] == i_env]
         i_chosen = rng.integers(0, len(env_samples), batch_size)
         chose_env_samples = env_samples[i_chosen]['s_']
         encoded = vae.encode_to_indices(cast_and_normalize_images(chose_env_samples))
@@ -381,13 +393,13 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
         o_rollout, r_rollout, terminals_rollout, w_predictors = pred([encoded, actions])
         predicted_decoded = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
 
-        closest_sample_indices = find_closest_match_tf(predicted_decoded, mem['s_'], max_diff).numpy()
+        closest_sample_indices = find_closest_match_tf(predicted_decoded, condensed_mem['s_'], max_diff).numpy()
         indices = np.full((batch_size, traj_len), -1)
         for i_batch in range(batch_size):
             for i_step in range(traj_len):
                 i_mem = closest_sample_indices[i_batch, i_step]
                 if i_mem != -1:
-                    indices[i_batch, i_step] = mem[i_mem]['env']
+                    indices[i_batch, i_step] = condensed_mem[i_mem]['env']
 
         # single process
         #indices = np.full((batch_size, traj_len), -1)

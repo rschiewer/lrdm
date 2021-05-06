@@ -1,16 +1,11 @@
 import pickle
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Union, List
 
 import blockworld
-import gym
 import gym_minigrid
-import numpy
-import numpy as np
-import tensorflow as tf
 import yaml
-from matplotlib import pyplot as plt, animation, pyplot
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
 
@@ -22,6 +17,8 @@ from replay_memory_tools import *
 from gym import spaces
 from gym import ObservationWrapper
 import cv2
+
+from replay_memory_tools import condense_places_in_mem
 
 
 class FixedSizePixelObs(ObservationWrapper):
@@ -341,15 +338,23 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
 def find_closest_match_tf(batch, samples_mem, max_diff=0.01):
     batch_size = tf.shape(batch)[0]
     timesteps = tf.shape(batch)[1]
-    num_samples = tf.shape(samples_mem)[0]
+    num_samples = tf.shape(samples_mem['s_'])[0]
     result_batch = tf.TensorArray(tf.int32, size=batch_size, dynamic_size=False)
     for i_b in range(batch_size):
         result_trajectory = tf.TensorArray(tf.int32, size=timesteps, dynamic_size=False)
         for i_t in range(timesteps):
             obs = batch[i_b, i_t]
             obs_repeated = tf.repeat(obs[tf.newaxis, ...], num_samples, axis=0)
-            difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem, tf.float32))
+            difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem['s_'], tf.float32))
             per_img_diff = tf.reduce_mean(difference, axis=[1, 2, 3]) / 255.0
+            #i_env_0_samples = len(samples_mem[samples_mem['env'] == 0])
+            #i_env_1_samples = i_env_0_samples + len(samples_mem[samples_mem['env'] == 1])
+            #i_env_2_samples = i_env_1_samples + len(samples_mem[samples_mem['env'] == 2])
+            #plt.plot(range(0, i_env_0_samples), per_img_diff[0: i_env_0_samples], label='env 0')
+            #plt.plot(range(i_env_0_samples, i_env_1_samples), per_img_diff[i_env_0_samples: i_env_1_samples], label='env 1')
+            #plt.plot(range(i_env_1_samples, i_env_2_samples), per_img_diff[i_env_1_samples: i_env_2_samples], label='env 2')
+            #plt.legend()
+            #plt.show()
             best_match = tf.argmin(per_img_diff, axis=0)
             if per_img_diff[best_match] > max_diff:
                 best_match = -1
@@ -358,18 +363,7 @@ def find_closest_match_tf(batch, samples_mem, max_diff=0.01):
     return result_batch.stack()
 
 
-def condense_places_in_mem(mem):
-    present_locations = set()
-    i_result = []
-    for i, sample in enumerate(mem):
-        pos_in_env = (sample['env'], *sample['pos'])
-        if pos_in_env not in present_locations:
-            present_locations.add(pos_in_env)
-            i_result.append(i)
-    return mem[i_result]
-
-
-def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, max_diff):
+def detect_env_per_sample(pred, vae, mem, batch_size, traj_len, max_diff, rand_seed):
     n_envs = mem['env'].max() + 1
     condensed_mem = condense_places_in_mem(mem)
 
@@ -377,9 +371,8 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
     env_weights = []
     for i_env in range(n_envs):
         env_samples = condensed_mem[condensed_mem['env'] == i_env]
-        #predicted_decoded, w_predictors = gen_rollout(batch_size, env_info, env_samples, pred, traj_len, vae)
-        _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, env_samples, vae, traj_len, 1, batch_size)
-        closest_sample_indices = find_closest_match_tf(predicted_decoded, condensed_mem['s_'], max_diff).numpy()
+        _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, env_samples, vae, traj_len, 1, batch_size, rand_seed)
+        closest_sample_indices = find_closest_match_tf(predicted_decoded, condensed_mem, max_diff).numpy()
         indices = np.full((batch_size, traj_len), -1)
         for i_batch in range(batch_size):
             for i_step in range(traj_len):
@@ -393,20 +386,8 @@ def detect_env_in_predictions(pred, vae, mem, env_info, batch_size, traj_len, ma
     return np.array(closest_env_indices), np.array(env_weights)
 
 
-def gen_rollout(batch_size, env_info, env_samples, pred, traj_len, vae):
-    rng = np.random.default_rng()
-    i_chosen = rng.integers(0, len(env_samples), batch_size)
-    chose_env_samples = env_samples[i_chosen]['s_']
-    encoded = vae.encode_to_indices(cast_and_normalize_images(chose_env_samples))
-    encoded = encoded[:, tf.newaxis, ...]  # add time dimension
-    actions = rng.integers(0, env_info['n_actions'], (batch_size, traj_len, 1))
-    o_rollout, r_rollout, terminals_rollout, w_predictors = pred([encoded, actions])
-    predicted_decoded = cast_and_unnormalize_images(vae.decode_from_indices(o_rollout)).numpy()
-    return predicted_decoded, w_predictors
-
-
-def plot_env_per_sample(pred, vae, mix_memory, env_info, n_trajs, n_time_steps, max_diff):
-    indices, weights = detect_env_in_predictions(pred, vae, mix_memory, env_info, n_trajs, n_time_steps, max_diff=max_diff)
+def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed):
+    indices, weights = detect_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed)
     n_envs = len(indices)
     timestep_labels = range(len(indices[0, 0]))
     bar_width = 0.5
@@ -432,15 +413,20 @@ def plot_env_per_sample(pred, vae, mix_memory, env_info, n_trajs, n_time_steps, 
         plt.show()
 
 
-def calc_loss(pred, vae, mem, env_info, batch_size, traj_len):
-    predicted_decoded, w_predictors = gen_rollout(batch_size, env_info, mem, pred, traj_len, vae)
+def check_traj_correctness(pred, vae, mem, batch_size, traj_len, max_diff, rand_seed):
+    _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, traj_len, 1, batch_size, rand_seed)
 
 
-def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories):
+
+def calc_loss(pred, vae, mem, batch_size, traj_len, rand_seed):
+    _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, traj_len, 1, batch_size, rand_seed)
+
+
+def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories, rand_seed=None):
     #if not predictor.open_loop_rollout_training:
     #    n_warmup_steps = n_steps
 
-    trajectories = extract_subtrajectories_unbiased(mem, n_trajectories, n_steps)
+    trajectories = extract_subtrajectories_unbiased(mem, n_trajectories, n_steps, rand_seed)
     encoded_obs, _, _, actions, _, _ = prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps)
 
     next_obs = trajectories['s_']

@@ -1,6 +1,7 @@
 import warnings
 import os
 import gym
+import numpy
 
 import numpy as np
 from matplotlib import pyplot as plt, animation
@@ -117,8 +118,11 @@ def extract_subtrajectories(mem, num_trajectories, traj_length, warn=True, sampl
     return subtrajectories
 
 
-def extract_subtrajectories_unbiased(mem, num_trajectories, traj_length):
-    start_indices = np.random.default_rng().integers(0, len(mem), num_trajectories)
+def extract_subtrajectories_unbiased(mem, num_trajectories, traj_length, rand_seed=None):
+    if rand_seed:
+        tf.random.set_seed(rand_seed)
+        np.random.seed(rand_seed)
+    start_indices = np.random.default_rng(rand_seed).integers(0, len(mem), num_trajectories)
     subtrajectories = np.zeros(shape=(num_trajectories, traj_length), dtype=mem.dtype)
     for i_subtraj, i_start in enumerate(start_indices):
         terminals = np.nonzero(mem[i_start: i_start + traj_length]['done'])[0]
@@ -126,7 +130,9 @@ def extract_subtrajectories_unbiased(mem, num_trajectories, traj_length):
             i_end = i_start + terminals[0] + 1
         else:
             i_end = i_start + traj_length
-        subtrajectories[i_subtraj, 0: i_end - i_start] = mem[i_start : i_end]
+        if i_end > len(mem):
+            i_end = len(mem)
+        subtrajectories[i_subtraj, 0: i_end - i_start] = mem[i_start: i_end]
         subtrajectories[i_subtraj]['env'] = mem[i_start]['env']
         assert np.all(mem[i_start: i_end]['env'] == mem[i_start]['env'])
     return subtrajectories
@@ -409,3 +415,14 @@ def load_env_samples(file_names):
     return memories
 
 
+def condense_places_in_mem(mem):
+    present_locations = set()
+    i_result = []
+    for i, sample in enumerate(mem):
+        pos_in_env = (sample['env'], *sample['pos'])
+        if pos_in_env not in present_locations:
+            present_locations.add(pos_in_env)
+            i_result.append(i)
+    condensed = mem[i_result]
+    sorted = np.sort(condensed, order=['env', 'pos'])
+    return sorted

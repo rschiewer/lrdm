@@ -462,7 +462,7 @@ class RecurrentPredictor(keras.Model):
             o_groundtruth = tf.one_hot(tf.cast(y[0], tf.int32), self._vae_n_embeddings, dtype=tf.float32)
             r_groundtruth = y[1]
             terminal_groundtruth = y[2]
-            i_env = tf.one_hot(tf.cast(y[3][:, :, 0], tf.int32), self.n_tasks, dtype=tf.float32)
+            i_env = tf.one_hot(tf.cast(y[3], tf.int32), self.n_tasks, dtype=tf.float32)
             use_i_env = tf.reduce_sum(i_env, axis=-1)
 
             o_predictions, r_predictions, terminal_predictions, w_predictors = self(x, training=True)

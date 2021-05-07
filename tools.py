@@ -174,7 +174,7 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     actions = trajectories['a'].astype(np.int32)
     rewards = trajectories['r'].astype(np.float32)
     terminals = trajectories['done'].astype(np.float32)
-    env_idx = trajectories['env'][..., np.newaxis]
+    env_idx = trajectories['env']
 
     batch_size = 32
 

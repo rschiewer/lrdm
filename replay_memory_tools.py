@@ -4,6 +4,7 @@ import gym
 import numpy
 
 import numpy as np
+import tensorflow
 from matplotlib import pyplot as plt, animation
 import tensorflow as tf
 
@@ -145,6 +146,44 @@ def cumulative_episode_rewards(mem):
     for es, ee, el in traj_info:
         rewards.append(mem[es:ee+1]['r'].sum())
     return rewards
+
+
+def build_trajectory_from_position_images(traj, actions, condensed_mem, max_diff):
+    # find most likely start sample
+    start_obs = traj[0]
+    i_current = find_closest_match_obs(start_obs[np.newaxis, np.newaxis, ...], condensed_mem, max_diff)[0, 0]
+    i_env = condensed_mem[i_current]['env']
+    condensed_env_mem = condensed_mem[condensed_mem['env'] == i_env]
+
+    # find new index of same observation in condensed memory
+    i_current = find_closest_match_obs(start_obs[np.newaxis, np.newaxis, ...], condensed_env_mem, max_diff)[0, 0]
+    pos_current = condensed_env_mem[i_current]['pos']
+
+    # start to build reconstruct trajectory
+    observations = []
+    for a in actions:
+        if a == 0:
+            new_pos = pos_current + [0, 1]
+        elif a == 1:
+            new_pos = pos_current + [1, 0]
+        elif a == 2:
+            new_pos = pos_current + [0, -1]
+        elif a == 3:
+            new_pos = pos_current + [-1, 0]
+        else:
+            raise ValueError(f'Unknown action: {a}')
+        i_new = find_closest_match_pos(new_pos[tf.newaxis, tf.newaxis, ...], condensed_env_mem)[0, 0]
+        # if no new observation matching the new position could be found, assume the new position is invalid and the
+        # agent did not move
+        if i_new != -1:
+            pos_current = new_pos
+            i_current = i_new
+            assert condensed_env_mem[i_current]['env'] == i_env
+        observations.append(condensed_env_mem[i_current]['s_'])
+
+    return i_env, np.array(observations)
+
+
 
 
 def blockworld_position_images(mem):
@@ -426,3 +465,50 @@ def condense_places_in_mem(mem):
     condensed = mem[i_result]
     sorted = np.sort(condensed, order=['env', 'pos'])
     return sorted
+
+
+def find_closest_match_obs(batch, samples_mem, max_diff=0.01):
+    batch_size = tf.shape(batch)[0]
+    timesteps = tf.shape(batch)[1]
+    num_samples = tf.shape(samples_mem['s_'])[0]
+    result_batch = tf.TensorArray(tf.int32, size=batch_size, dynamic_size=False)
+    for i_b in range(batch_size):
+        result_trajectory = tf.TensorArray(tf.int32, size=timesteps, dynamic_size=False)
+        for i_t in range(timesteps):
+            obs = batch[i_b, i_t]
+            obs_repeated = tf.repeat(obs[tf.newaxis, ...], num_samples, axis=0)
+            difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem['s_'], tf.float32))
+            per_img_diff = tf.reduce_mean(difference, axis=[1, 2, 3]) / 255.0
+            #i_env_0_samples = len(samples_mem[samples_mem['env'] == 0])
+            #i_env_1_samples = i_env_0_samples + len(samples_mem[samples_mem['env'] == 1])
+            #i_env_2_samples = i_env_1_samples + len(samples_mem[samples_mem['env'] == 2])
+            #plt.plot(range(0, i_env_0_samples), per_img_diff[0: i_env_0_samples], label='env 0')
+            #plt.plot(range(i_env_0_samples, i_env_1_samples), per_img_diff[i_env_0_samples: i_env_1_samples], label='env 1')
+            #plt.plot(range(i_env_1_samples, i_env_2_samples), per_img_diff[i_env_1_samples: i_env_2_samples], label='env 2')
+            #plt.legend()
+            #plt.show()
+            best_match = tf.argmin(per_img_diff, axis=0)
+            if per_img_diff[best_match] > max_diff:
+                best_match = -1
+            result_trajectory = result_trajectory.write(i_t, tf.cast(best_match, dtype=tf.int32))
+        result_batch = result_batch.write(i_b, result_trajectory.stack())
+    return result_batch.stack()
+
+
+def find_closest_match_pos(batch, samples_mem, max_diff=0.001):
+    batch_size = tf.shape(batch)[0]
+    timesteps = tf.shape(batch)[1]
+    num_samples = tf.shape(samples_mem['s_'])[0]
+    result_batch = tf.TensorArray(tf.int32, size=batch_size, dynamic_size=False)
+    for i_b in range(batch_size):
+        result_trajectory = tf.TensorArray(tf.int32, size=timesteps, dynamic_size=False)
+        for i_t in range(timesteps):
+            pos = batch[i_b, i_t]
+            best_match = -1
+            for i_sample, sample_pos in enumerate(samples_mem['pos']):
+                if tf.reduce_mean(tf.math.abs(pos - sample_pos)) < max_diff:
+                    best_match = i_sample
+                    break
+            result_trajectory = result_trajectory.write(i_t, tf.cast(best_match, dtype=tf.int32))
+        result_batch = result_batch.write(i_b, result_trajectory.stack())
+    return result_batch.stack()

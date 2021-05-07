@@ -73,7 +73,6 @@ if __name__ == '__main__':
     #dec_o_ = cast_and_unnormalize_images(vae.decode_from_indices(tf.cast(enc_o_, tf.int32)))
     #trajectory_video(np.stack([dec_o_[4000].numpy(), trajs[4000]['s_']]), 'ro')
 
-
     if not CONFIG.pred_use_env_idx:
         i_env = np.ones_like(i_env) * -1
 
@@ -85,8 +84,8 @@ if __name__ == '__main__':
 
     callbacks = []
 
-    checkpoint_cbk = ModelCheckpoint(predictor_weights_path, monitor='loss', verbose=0, period=1,
-                                     save_weights_only=True, save_best_only=True)
+    #checkpoint_cbk = ModelCheckpoint(predictor_weights_path, monitor='loss', verbose=0, period=1,
+    #                                 save_weights_only=True, save_best_only=True)
     #callbacks.append(checkpoint_cbk)
 
     if CONFIG.neptune_project_name:

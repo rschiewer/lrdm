@@ -18,7 +18,7 @@ from gym import spaces
 from gym import ObservationWrapper
 import cv2
 
-from replay_memory_tools import condense_places_in_mem
+from replay_memory_tools import condense_places_in_mem, find_closest_match_obs
 
 
 class FixedSizePixelObs(ObservationWrapper):
@@ -66,6 +66,7 @@ class FixedSizePixelObs(ObservationWrapper):
 
 
 def gen_environments(test_setting):
+    b = blockworld.Blockworld
     if test_setting == 'gridworld_3_rooms':
         env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
         environments = [gym.make(env_name) for env_name in env_names]
@@ -173,7 +174,7 @@ def prepare_predictor_data(trajectories, vae, n_steps, n_warmup_steps):
     actions = trajectories['a'].astype(np.int32)
     rewards = trajectories['r'].astype(np.float32)
     terminals = trajectories['done'].astype(np.float32)
-    env_idx = trajectories['env']
+    env_idx = trajectories['env'][..., np.newaxis]
 
     batch_size = 32
 
@@ -335,34 +336,6 @@ def predictor_allocation_stability(predictor, mem, vae, i_env):
     return fig
 
 
-def find_closest_match_tf(batch, samples_mem, max_diff=0.01):
-    batch_size = tf.shape(batch)[0]
-    timesteps = tf.shape(batch)[1]
-    num_samples = tf.shape(samples_mem['s_'])[0]
-    result_batch = tf.TensorArray(tf.int32, size=batch_size, dynamic_size=False)
-    for i_b in range(batch_size):
-        result_trajectory = tf.TensorArray(tf.int32, size=timesteps, dynamic_size=False)
-        for i_t in range(timesteps):
-            obs = batch[i_b, i_t]
-            obs_repeated = tf.repeat(obs[tf.newaxis, ...], num_samples, axis=0)
-            difference = tf.math.abs(tf.cast(obs_repeated, tf.float32) - tf.cast(samples_mem['s_'], tf.float32))
-            per_img_diff = tf.reduce_mean(difference, axis=[1, 2, 3]) / 255.0
-            #i_env_0_samples = len(samples_mem[samples_mem['env'] == 0])
-            #i_env_1_samples = i_env_0_samples + len(samples_mem[samples_mem['env'] == 1])
-            #i_env_2_samples = i_env_1_samples + len(samples_mem[samples_mem['env'] == 2])
-            #plt.plot(range(0, i_env_0_samples), per_img_diff[0: i_env_0_samples], label='env 0')
-            #plt.plot(range(i_env_0_samples, i_env_1_samples), per_img_diff[i_env_0_samples: i_env_1_samples], label='env 1')
-            #plt.plot(range(i_env_1_samples, i_env_2_samples), per_img_diff[i_env_1_samples: i_env_2_samples], label='env 2')
-            #plt.legend()
-            #plt.show()
-            best_match = tf.argmin(per_img_diff, axis=0)
-            if per_img_diff[best_match] > max_diff:
-                best_match = -1
-            result_trajectory = result_trajectory.write(i_t, tf.cast(best_match, dtype=tf.int32))
-        result_batch = result_batch.write(i_b, result_trajectory.concat())
-    return result_batch.stack()
-
-
 def detect_env_per_sample(pred, vae, mem, batch_size, traj_len, max_diff, rand_seed):
     n_envs = mem['env'].max() + 1
     condensed_mem = condense_places_in_mem(mem)
@@ -371,8 +344,8 @@ def detect_env_per_sample(pred, vae, mem, batch_size, traj_len, max_diff, rand_s
     env_weights = []
     for i_env in range(n_envs):
         env_samples = condensed_mem[condensed_mem['env'] == i_env]
-        _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, env_samples, vae, traj_len, 1, batch_size, rand_seed)
-        closest_sample_indices = find_closest_match_tf(predicted_decoded, condensed_mem, max_diff).numpy()
+        _, _, _, predicted_decoded, _, _, _, chosen_pred = generate_test_rollouts(pred, env_samples, vae, traj_len, 1, batch_size, rand_seed)
+        closest_sample_indices = find_closest_match_obs(predicted_decoded, condensed_mem, max_diff).numpy()
         indices = np.full((batch_size, traj_len), -1)
         for i_batch in range(batch_size):
             for i_step in range(traj_len):
@@ -413,13 +386,33 @@ def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, 
         plt.show()
 
 
-def check_traj_correctness(pred, vae, mem, batch_size, traj_len, max_diff, rand_seed):
-    _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, traj_len, 1, batch_size, rand_seed)
+def check_traj_correctness(pred, vae, mem, n_trajs, n_time_steps, max_diff, rand_seed):
+    _, _, _, predicted_decoded, actions, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, n_time_steps, 1, n_trajs, rand_seed)
+    condensed_mem = condense_places_in_mem(mem)
+    traj_differences = []
+    env_indices = []
+    for pred_traj, real_acts in zip(predicted_decoded, actions):
+        i_env, recons_real_traj = build_trajectory_from_position_images(pred_traj, real_acts, condensed_mem, max_diff)
+        traj_differences.append(np.mean(np.abs(pred_traj - recons_real_traj)))
+        env_indices.append(i_env)
+    traj_differences = np.array(traj_differences)
+    env_indices = np.array(env_indices)
+
+    env_0_traj_differences = traj_differences[env_indices == 0]
+    env_1_traj_differences = traj_differences[env_indices == 1]
+    env_2_traj_differences = traj_differences[env_indices == 2]
+
+    plt.bar(['env 0', 'env 1', 'env 2'],
+            [env_0_traj_differences.mean(), env_1_traj_differences.mean(), env_2_traj_differences.mean()], 0.35,
+            yerr=[env_0_traj_differences.std(), env_1_traj_differences.std(), env_2_traj_differences.std()])
+    plt.show()
+
+    #debug_visualize_observation_sequence(trajectory)
 
 
 
 def calc_loss(pred, vae, mem, batch_size, traj_len, rand_seed):
-    _, _, _, predicted_decoded, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, traj_len, 1, batch_size, rand_seed)
+    _, _, _, predicted_decoded, _, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, traj_len, 1, batch_size, rand_seed)
 
 
 def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_trajectories, rand_seed=None):
@@ -448,7 +441,7 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
     rewards = tf.squeeze(r_rollout).numpy()
     terminals = tf.squeeze(terminals_rollout).numpy()
 
-    return targets_obs, targets_r, targets_done, decoded_rollout_obs, rewards, terminals, chosen_predictor
+    return targets_obs, targets_r, targets_done, decoded_rollout_obs, actions, rewards, terminals, chosen_predictor
 
 
 def rollout_videos(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor, video_title, store_animation=False):

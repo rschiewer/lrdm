@@ -74,8 +74,8 @@ def gen_environments(test_setting):
         obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
-    elif test_setting == 'gridworld_doors_teleporters':
-        env_names = ['Gridworld-partial-room-v5']
+    if test_setting == 'gridworld_3_rooms_rand_starts':
+        env_names = ['Gridworld-partial-room-v3', 'Gridworld-partial-room-v4', 'Gridworld-partial-room-v5']
         environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape
         obs_dtype = environments[0].observation_space.dtype
@@ -97,8 +97,7 @@ def gen_environments(test_setting):
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
     elif test_setting == 'gym_classics':
-        #env_names = ['CartPole-v0', 'LunarLander-v2', 'BipedalWalker-v3']
-        env_names = ['CartPole-v0', 'CartPole-v0', 'CartPole-v0']
+        env_names = ['CartPole-v0', 'LunarLander-v2', 'BipedalWalker-v3']
         environments = [FixedSizePixelObs(gym.make(env_name), (64, 64)) for env_name in env_names]
         #environments = [gym.make(env_name) for env_name in env_names]
         obs_shape = environments[0].observation_space.shape

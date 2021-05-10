@@ -45,7 +45,7 @@ def detect_trajectories_2(mem):
 def mem_sanity_check(mem):
     traj_info = detect_trajectories(mem)
     for s, e, l in traj_info:
-        assert mem[s]['done'] == False
+        #assert mem[s]['done'] == False
         assert mem[e]['done'] == True
         assert np.all(mem[s:e+1]['env'] == mem[s]['env'])
     indices, occurrences = np.unique(mem['env'], return_counts=True)

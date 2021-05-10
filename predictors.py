@@ -508,9 +508,9 @@ class RecurrentPredictor(keras.Model):
                     terminal_pred = terminal_predictions[i]
                     w_predictor = w_predictors[i]
                     curr_mdl_unweighted_obs_err = tf.losses.categorical_crossentropy(o_groundtruth, o_pred)
-                    curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * w_predictor)
-                    curr_mdl_r_err = tf.reduce_mean(tf.losses.mse(r_groundtruth, r_pred) * w_predictor)
-                    curr_mdl_terminal_err = tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred) * w_predictor)
+                    curr_mdl_obs_err = tf.reduce_mean(tf.reduce_mean(curr_mdl_unweighted_obs_err, axis=[2, 3]) * i_env[:, :, i])
+                    curr_mdl_r_err = tf.reduce_mean(tf.losses.mse(r_groundtruth, r_pred) * i_env[:, :, i])
+                    curr_mdl_terminal_err = tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred) * i_env[:, :, i])
                     curr_mdl_pred_err = curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
                     #curr_mdl_div_loss = 0#0.002 / self.n_models * np.prod(self._h_out_shape) * tf.reduce_mean(tf.math.multiply((w_predictor + 1E-5), tf.math.log(w_predictor + 1E-5)))  # regularization to incentivize picker to not let a predictor starve

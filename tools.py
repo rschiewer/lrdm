@@ -21,6 +21,22 @@ import cv2
 from replay_memory_tools import condense_places_in_mem, find_closest_match_obs
 
 
+class CharToFloatObs(ObservationWrapper):
+
+    def __init__(self, env):
+        super(CharToFloatObs, self).__init__(env)
+
+        assert type(env.observation_space) is spaces.Box, 'Only envs with image observations are supported'
+        assert env.observation_space.dtype == np.uint8 or env.observation_space.dtype == np.int8, 'Need char data type'
+
+        self.observation_space = spaces.Box(low=env.observation_space.low, high=env.observation_space.high,
+                                            shape=env.observation_space.shape, dtype=np.float32)
+
+    def observation(self, observation):
+        converted = tf.cast(observation, tf.float32) / 255.0
+        return converted
+
+
 class FixedSizePixelObs(ObservationWrapper):
     """Augment observations by pixel values."""
 
@@ -138,8 +154,8 @@ def vq_vae_net(obs_shape, n_embeddings, d_embeddings, train_data_var, commitment
     if not tf_eager_mode:
         vae.build((None, *obs_shape))
 
-    if summary:
-        vae.summary()
+        if summary:
+            vae.summary()
 
     return vae
 
@@ -163,8 +179,8 @@ def predictor_net(n_actions, obs_shape, n_envs, vae, det_filters, prob_filters, 
         net_s_act = tf.TensorShape((None, None, 1))
         all_predictor.build([net_s_obs, net_s_act])
 
-    if summary:
-        all_predictor.summary()
+        if summary:
+            all_predictor.summary()
 
     return all_predictor
 

@@ -8,7 +8,7 @@ from replay_memory_tools import cast_and_normalize_images
 from tools import ValueHistory
 
 
-def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
+def plan(predictor, prev_dist_params, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
          n_iterations, top_perc, gamma, action_noise, env_name, neptune_run, debug_plot=False):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
@@ -20,7 +20,10 @@ def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_ac
     o_hist = tf.repeat(preprocessed_start_samples[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
     a_hist = tf.repeat(preprocessed_start_actions[tf.newaxis, :, tf.newaxis], repeats=[n_rollouts], axis=0)
     # initial params for sampling distribution
-    dist_params = tf.ones((plan_steps, n_actions), dtype=tf.float32) / n_actions
+    if prev_dist_params is None:
+        dist_params = tf.ones((plan_steps, n_actions), dtype=tf.float32) / n_actions
+    else:
+        dist_params = prev_dist_params
     k = tf.cast(tf.round(n_rollouts * top_perc), tf.int32)
 
     assert n_iterations > 0, f'Number of iterations must be geater than 0 but is {n_iterations}'
@@ -83,7 +86,7 @@ def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_ac
         w_per_pred = tf.reduce_mean(per_predictor_weights, axis=[0]).numpy()
         for i_pred, w_pred in enumerate(w_per_pred):
             neptune_run[f'{env_name}/w_planning/pred_{i_pred}'].log(w_pred)
-        neptune_run[f'{env_name}/best_action_sequence'].log(top_a_sequence[0, :, 0].numpy())
+        #neptune_run[f'{env_name}/best_action_sequence'].log(top_a_sequence[0, :, 0].numpy())
 
     if debug_plot:
         fig.suptitle(f'Top {k} planning rollouts')
@@ -94,7 +97,7 @@ def plan(predictor, preprocessed_start_samples, preprocessed_start_actions, n_ac
         plt.legend()
         plt.show()
 
-    return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
+    return top_a_sequence[0, :, 0], dist_params  # take best guess from last iteration and remove redundant dimension
     #return tfp.distributions.Categorical(probs=dist_params).sample(1)[..., tf.newaxis]
 
 
@@ -168,6 +171,7 @@ def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps
     #    env.render()
     #available_actions.clear()
 
+    previous_dist_params = None
     while True:
         if render:
             env.render()
@@ -181,13 +185,16 @@ def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps
             preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
             preprocessed_start_samples = vae.encode_to_indices(preprocessed_start_samples)
             preprocessed_start_actions = tf.cast(act_history.to_numpy(), tf.int32)
-            actions = plan(predictor, preprocessed_start_samples, preprocessed_start_actions, env_info['n_actions'],
+            actions, previous_dist_params = plan(predictor, previous_dist_params, preprocessed_start_samples,
+                                                 preprocessed_start_actions, env_info['n_actions'],
                            plan_steps, n_rollouts, n_iterations, top_perc, gamma, action_noise, env_name, neptune_run)
             available_actions.extend([a for a in actions.numpy()[:consecutive_actions]])
 
 
         # pick first one and trash the rest if we do MPC
         action = available_actions.pop(0)
+        #previous_dist_params = tf.concat([previous_dist_params[1:], tf.ones((1, env_info['n_actions'])) / env_info['n_actions']], axis=0)
+        previous_dist_params = None
 
         act_names = ['up', 'right', 'down', 'left', 'noop']
         print(f'action: {act_names[action]}')

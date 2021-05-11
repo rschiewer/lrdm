@@ -98,6 +98,7 @@ if __name__ == '__main__':
 
     #plot_avg_steps(project_name, env_names, ['PRED-437', 'PRED-438'], ['control'])
     #plot_avg_steps(project_name, env_names, ['PRED-460', 'PRED-461'], ['control'])
-    plot_avg_steps(project_name, env_names, ['PRED-497', 'PRED-498'], ['control'])
+    #plot_avg_steps(project_name, env_names, ['PRED-497', 'PRED-498'], ['control'])
+    plot_avg_steps(project_name, env_names, ['PRED-537', 'PRED-538'], ['control'])
     #plot_loss(project_name, ['PRED-495', 'PRED-496'], ['predictor'], False)
     #plot_picker_loss(project_name, ['PRED-495', 'PRED-496'], ['predictor'], False)

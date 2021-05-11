@@ -42,8 +42,8 @@ if __name__ == '__main__':
     pred.load_weights(predictor_weights_path)
 
     # prediction block diagram
-    plot_env_per_sample(pred, vae, mix_memory, env_info, n_trajs=64, n_time_steps=50, max_diff=0.1)
-    quit()
+    plot_env_per_sample(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
+    #check_traj_correctness(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
 
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
@@ -61,12 +61,12 @@ if __name__ == '__main__':
             run[f'predictor_allocation_{name}'] = neptune.types.File.as_image(fig)
 
     # some rollout videos
-    targets_obs, targets_r, targets_done, o_rollout, r_rollout, done_rollout, w_predictors = \
+    targets_obs, targets_r, targets_done, o_rollout, actions, r_rollout, done_rollout, w_predictors =\
         generate_test_rollouts(predictor=pred, mem=mix_memory, vae=vae, n_steps=200, n_warmup_steps=5, n_trajectories=4)
     rollout_videos(targets_obs, o_rollout, r_rollout, done_rollout, w_predictors, 'Predictor Test')
 
     # more thorough rollouts
-    targets_obs, targets_r, targets_done, o_rollout, r_rollout, done_rollout, w_predictors =\
+    targets_obs, targets_r, targets_done, o_rollout, actions, r_rollout, done_rollout, w_predictors =\
         generate_test_rollouts(predictor=pred, mem=mix_memory, vae=vae, n_steps=50, n_warmup_steps=5, n_trajectories=500)
 
     #terminal_reward_wrt_timestep = np.full((20,), -1, dtype=np.float32)

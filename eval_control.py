@@ -52,6 +52,11 @@ if __name__ == '__main__':
     else:
         run = None
 
+    if CONFIG.env_setting == 'gridworld_3_rooms_rand_starts':
+        print('Deactivating random starts for control')
+        for env in envs:
+            env.player_random_start = False
+
     for i_run in range(CONFIG.ctrl_n_runs):
         for name, env in zip(env_names, envs):
             print(f'Planning in {name}')

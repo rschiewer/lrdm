@@ -522,6 +522,14 @@ class VectorQuantizerEMAKeras(tf.keras.Model):
         x_recon = self._decode(embeddings)
         return x_recon
 
+    def quantize_embeddings(self, embeddings):
+        quantized, _, _ = self._vqvae(embeddings)
+        return quantized
+
+    def embeddings_to_indices(self, embeddings):
+        indices = self._vqvae.encode_to_indices(embeddings)
+        return indices
+
     def indices_to_embeddings(self, indices):
         embeddings = self._vqvae.codebook_lookup(indices)
         return embeddings

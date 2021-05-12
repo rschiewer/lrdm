@@ -76,44 +76,6 @@ class LatentSpaceEnv(gym.Env):
             plt.draw()
 
 
-class MultiLatentSpaceEnv(gym.Env):
-
-    def __init__(self, orig_envs: List[gym.Env], vae: VectorQuantizerEMAKeras, task_ids: List[int] = None):
-        super(MultiLatentSpaceEnv, self).__init__()
-
-        if task_ids is None:
-            task_ids = [None] * len(orig_envs)
-        else:
-            assert len(orig_envs) == len(task_ids), 'If task_ids is not None, must have same length as number of envs'
-
-        self._orig_envs = orig_envs
-        self._vae = vae
-        self._task_ids = task_ids
-
-        self._envs = self._gen_envs()
-        self._active_env = np.random.default_rng().integers(0, len(self._envs))
-
-        self.action_space = self._envs[0].action_space
-        self.observation_space = self._envs[0].observation_space
-
-        for env in self._envs:
-            assert env.action_space == self.action_space, 'All envs must have the same action space'
-            assert env.observation_space == self.observation_space, 'All envs must have the same observation space'
-
-    def _gen_envs(self):
-        return [LatentSpaceEnv(env, self._vae, id) for env, id in zip(self._orig_envs, self._task_ids)]
-
-    def reset(self):
-        self._active_env = np.random.default_rng().integers(0, len(self._envs))
-        return self._envs[self._active_env].reset()
-
-    def step(self, action):
-        return self._envs[self._active_env].step(action)
-
-    def render(self, mode='human'):
-        self._envs[self._active_env].render(mode)
-
-
 class SimulatedLatentSpaceEnv(LatentSpaceEnv):
 
     def __init__(self, orig_env: gym.Env, simulator: RecurrentPredictor, vae: VectorQuantizerEMAKeras,
@@ -157,6 +119,56 @@ class SimulatedLatentSpaceEnv(LatentSpaceEnv):
             self._plot_win.set_data(decoded_rollout_obs.numpy())
             plt.pause(0.1)
             plt.draw()
+
+
+class MultiEnv(gym.Env):
+
+    def __init__(self, orig_envs: List[gym.Env], task_ids: List[int] = None):
+        super(MultiEnv, self).__init__()
+
+        if task_ids is None:
+            task_ids = [None] * len(orig_envs)
+        else:
+            assert len(orig_envs) == len(task_ids), 'If task_ids is not None, must have same length as number of envs'
+
+        self._orig_envs = orig_envs
+        self._task_ids = task_ids
+
+        self._envs = self._gen_envs()
+        self._active_env = np.random.default_rng().integers(0, len(self._envs))
+
+        self.action_space = self._envs[0].action_space
+        self.observation_space = self._envs[0].observation_space
+
+        for env in self._envs:
+            assert env.action_space == self.action_space, 'All envs must have the same action space'
+            assert env.observation_space == self.observation_space, 'All envs must have the same observation space'
+
+    def _gen_envs(self):
+        return [env for env in self._orig_envs]
+
+    def reset(self, task_id: int = None):
+        if task_id is None:
+            self._active_env = np.random.default_rng().integers(0, len(self._envs))
+        else:
+            self._active_env = task_id
+        return self._envs[self._active_env].reset()
+
+    def step(self, action):
+        return self._envs[self._active_env].step(action)
+
+    def render(self, mode='human'):
+        self._envs[self._active_env].render(mode)
+
+
+class MultiLatentSpaceEnv(MultiEnv):
+
+    def __init__(self, orig_envs: List[gym.Env], vae: VectorQuantizerEMAKeras, task_ids: List[int] = None):
+        self._vae = vae
+        super(MultiLatentSpaceEnv, self).__init__(orig_envs, task_ids)
+
+    def _gen_envs(self):
+        return [LatentSpaceEnv(env, self._vae, id) for env, id in zip(self._orig_envs, self._task_ids)]
 
 
 class MultiSimulatedLatentSpaceEnv(MultiLatentSpaceEnv):

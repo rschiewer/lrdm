@@ -43,8 +43,11 @@ if __name__ == '__main__':
                          tf_eager_mode=CONFIG.tf_eager_mode)
     pred.load_weights(predictor_weights_path)
 
-    dream_env = SimulatedLatentSpaceEnv(envs[2], pred, vae)
-    dream_env.reset()
+    dream_env = MultiSimulatedLatentSpaceEnv(envs, pred, vae, [0, 1, 2], 0.9)
+    #dream_env = MultiLatentSpaceEnv(envs, vae, [0, 1, 2])
+    #dream_env = SimulatedLatentSpaceEnv(envs[2], pred, vae, 0)
+    #dream_env = LatentSpaceEnv(envs[2], vae, 0)
+    print(dream_env.reset())
 
     rewards = []
     for t in range(1000):

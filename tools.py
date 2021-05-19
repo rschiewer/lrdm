@@ -409,6 +409,7 @@ def check_traj_correctness(pred, vae, mem, n_trajs, n_time_steps, max_diff, rand
     for pred_traj, real_acts in zip(predicted_decoded, actions):
         i_env, recons_real_traj = build_trajectory_from_position_images(pred_traj, real_acts, condensed_mem, max_diff)
         traj_differences.append(np.mean(np.abs(pred_traj - recons_real_traj)))
+        #trajectory_video([pred_traj, recons_real_traj], ['predicted', 'reconstructed real'], interval=500)
         env_indices.append(i_env)
     traj_differences = np.array(traj_differences)
     env_indices = np.array(env_indices)
@@ -461,13 +462,14 @@ def generate_test_rollouts(predictor, mem, vae, n_steps, n_warmup_steps, n_traje
 
 def rollout_videos(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor, video_title, store_animation=False):
     max_pred_idx = chosen_predictor.max() + 1e-5
-    max_reward = r_rollouts.max() + 1e-5
+    min_reward = np.abs(r_rollouts.min())
+    max_reward = r_rollouts.max() + min_reward + 1e-5
     all_videos = []
     all_titles = []
     for i, (ground_truth, o_rollout, r_rollout, done_rollout, pred_weight) in enumerate(zip(targets, o_rollouts, r_rollouts, done_rollouts, chosen_predictor)):
-        weight_imgs = np.stack([np.full_like(ground_truth[0], w) / max_pred_idx * 255 for w in pred_weight])
-        reward_imgs = np.stack([np.full_like(ground_truth[0], r) / max_reward * 255 for r in r_rollout])
-        done_imgs = np.stack([np.full_like(ground_truth[0], done) * 255 for done in done_rollout])
+        weight_imgs = np.stack([np.full_like(ground_truth[0], w / max_pred_idx * 255) for w in pred_weight])
+        reward_imgs = np.stack([np.full_like(ground_truth[0], (r + min_reward) / max_reward * 255) for r in r_rollout])
+        done_imgs = np.stack([np.full_like(ground_truth[0], done * 255) for done in done_rollout])
         all_videos.extend([np.clip(ground_truth, 0, 255),
                            np.clip(o_rollout, 0, 255),
                            np.clip(reward_imgs, 0, 255),

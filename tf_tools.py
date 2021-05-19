@@ -7,7 +7,7 @@ from tensorflow.keras import layers
 class ImageResizeLayer(keras.layers.Layer):
 
     def __init__(self, out_shape, **kwargs):
-        assert np.ndim(out_shape) is 1 and len(out_shape) is 2, 'Expected 2D tuple for out_shape (img_dim_0, img_dim_1)'
+        assert np.ndim(out_shape) == 1 and len(out_shape) == 2, 'Expected 2D tuple for out_shape (img_dim_0, img_dim_1)'
         super().__init__(**kwargs)
 
         self.out_shape = tf.tuple(out_shape)
@@ -15,7 +15,7 @@ class ImageResizeLayer(keras.layers.Layer):
         self.trainable = False
 
     def build(self, input_shape):
-        assert np.ndim(input_shape) is 1 and len(input_shape) is 4, \
+        assert np.ndim(input_shape) == 1 and len(input_shape) == 4, \
             'Expected 4D tensor input (batch_size, image_dim_0, image_dim_1, channels), ' \
             'but input is: {}'.format(input_shape)
         assert 1 <= input_shape[3] <= 3, 'Expected 1 to 3 channels'
@@ -72,6 +72,32 @@ class InflateLayer(layers.Layer):
         return inflated
 
 
+class InflateLayer2(layers.Layer):
+
+    def __init__(self, inflate_sizes, n_input_dims, **kwargs):
+        super(InflateLayer2, self).__init__(**kwargs)
+        self.trainable = False
+        self.inflate_dims = tuple(inflate_sizes)
+        self.n_input_dims = n_input_dims
+
+    def call(self, inputs, **kwargs):
+        if self.n_input_dims == 2:
+            #reshaped = tf.reshape(inputs, (batch_dim, 1, 1, data_dim))
+            # tf.reshape statement results in None dimension for channels, nobody except tf devs knows why
+            reshaped = tf.expand_dims(inputs, 1)
+            reshaped = tf.expand_dims(reshaped, 1)
+            inflated = tf.tile(reshaped, [1, self.inflate_dims[0], self.inflate_dims[1], 1])
+        elif self.n_input_dims == 3:
+
+            reshaped = tf.expand_dims(inputs, 2)
+            reshaped = tf.expand_dims(reshaped, 2)
+            inflated = tf.tile(reshaped, [1, 1, self.inflate_dims[0], self.inflate_dims[1], 1])
+        else:
+            raise RuntimeError('Inputs are expected to be 2D (batch, data) or 3D (batch, time, data)')
+
+        return inflated
+
+
 class TimeAwareFlatten(layers.Layer):
 
     def __init__(self, **kwargs):
@@ -111,7 +137,7 @@ class ResidualConv2D(tf.keras.Model):
         self.bn_1 = layers.BatchNormalization()
 
     def build(self, input_shape):
-        n_input_channels = input_shape[-1] if self.data_format is 'channels_last' else input_shape[-3]
+        n_input_channels = input_shape[-1] if self.data_format == 'channels_last' else input_shape[-3]
 
         # if input and output number of channels mismatch, skip connection needs to have channels adjusted
         if n_input_channels != self.n_channels and self.conv_2 is None:

@@ -1,14 +1,6 @@
 from project_init import *
 from tools import *
 from simulated_env import *
-from garage import wrap_experiment
-from garage.envs import GymEnv, normalize
-from garage.experiment.deterministic import set_seed
-from garage.sampler import RaySampler
-from garage.tf.algos import PPO
-from garage.tf.baselines import GaussianCNNBaseline
-from garage.tf.policies import CategoricalCNNPolicy
-from garage.trainer import TFTrainer
 
 from tf_agents.agents.categorical_dqn import categorical_dqn_agent
 from tf_agents.drivers import dynamic_step_driver
@@ -22,12 +14,14 @@ from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 from gym.wrappers import TransformObservation
+from tf_tools import InflateLayer2
 
 
 def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
     num_iterations = 50000  # @param {type:"integer"}
 
-    initial_collect_steps = 1000  # @param {type:"integer"}
+    initial_collect_steps = 10000  # @param {type:"integer"}
+    transitions_allowed = 100000
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     replay_buffer_capacity = 100000  # @param {type:"integer"}
 
@@ -42,7 +36,7 @@ def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
     num_atoms = 51  # @param {type:"integer"}
     min_q_value = -20  # @param {type:"integer"}
     max_q_value = 20  # @param {type:"integer"}
-    n_step_update = 2  # @param {type:"integer"}
+    n_step_update = 5  # @param {type:"integer"}
 
     num_eval_episodes = 10  # @param {type:"integer"}
     eval_interval = 1000  # @param {type:"integer"}
@@ -56,17 +50,27 @@ def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
 
     train_env = tf_py_environment.TFPyEnvironment(train_py_env)
     eval_env = tf_py_environment.TFPyEnvironment(eval_py_env)
+    obs_shape = train_env.observation_spec()['o'].shape
+
+    def combiner_fn(input):
+        obs = tf.cast(input['o'], tf.float32)
+        task_id = tf.cast(tf.expand_dims(input['task'], 1), tf.float32)
+        tid_inflated = InflateLayer2(obs_shape[:2], 2)(task_id)
+        x = tf.keras.layers.Concatenate()([obs, tid_inflated])
+        return x
 
     categorical_q_net = categorical_q_network.CategoricalQNetwork(
         train_env.observation_spec(),
         train_env.action_spec(),
         num_atoms=num_atoms,
         conv_layer_params=conv_layer_params,
+        preprocessing_combiner=tf.keras.layers.Lambda(lambda input: combiner_fn(input)),
         fc_layer_params=fc_layer_params)
 
     optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
 
     train_step_counter = tf.compat.v2.Variable(0)
+    transitions_collected = tf.compat.v2.Variable(0)
 
     agent = categorical_dqn_agent.CategoricalDqnAgent(
         train_env.time_step_spec(),
@@ -112,6 +116,8 @@ def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
         max_length=replay_buffer_capacity)
 
     def collect_step(environment, policy):
+        transitions_collected.assign(transitions_collected.value() + 1)
+
         time_step = environment.current_time_step()
         action_step = policy.action(time_step)
         next_time_step = environment.step(action_step.action)
@@ -147,7 +153,8 @@ def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
     for _ in range(num_iterations):
         # Collect a few steps using collect_policy and save to the replay buffer.
         for _ in range(collect_steps_per_iteration):
-            collect_step(train_env, agent.collect_policy)
+            if transitions_collected.value() < transitions_allowed:
+                collect_step(train_env, agent.collect_policy)
 
         # Sample a batch of data from the buffer and update the agent's network.
         experience, unused_info = next(iterator)
@@ -156,7 +163,7 @@ def train_dqn_agent(simulated_env: gym.Env, real_env: gym.Env, seed: float):
         step = agent.train_step_counter.numpy()
 
         if step % log_interval == 0:
-            print('step = {0}: loss = {1}'.format(step, train_loss.loss))
+            print('step = {0}: collected = {1}: loss = {2}'.format(step, transitions_collected.value(), train_loss.loss))
 
         if step % eval_interval == 0:
             avg_return = compute_avg_return(eval_env, agent.policy, num_eval_episodes)
@@ -207,11 +214,26 @@ if __name__ == '__main__':
                          tf_eager_mode=CONFIG.tf_eager_mode)
     pred.load_weights(predictor_weights_path)
 
-    for env, eval_env in zip(envs[0:1], eval_envs[0:1]):
+    # train in simulated environment
+    #env = MultiSimulatedLatentSpaceEnv(envs, pred, vae, [0, 1, 2], 0.9)
+    #eval_env = MultiLatentSpaceEnv(envs, vae, [0, 1, 2])
+    #train_dqn_agent(env, eval_env, rand_seed)
+
+    # train on latent space env
+    #env = MultiLatentSpaceEnv(envs, vae, [0, 1, 2])
+    #eval_env = MultiLatentSpaceEnv(envs, vae, [0, 1, 2])
+    #train_dqn_agent(env, eval_env, rand_seed)
+
+    # train on original env
+    env = CharToFloatObs(MultiEnv(envs, [0, 1, 2]))
+    eval_env = CharToFloatObs(MultiEnv(envs, [0, 1, 2]))
+    train_dqn_agent(env, eval_env, rand_seed)
+
+    #for env, eval_env in zip(envs[0:1], eval_envs[0:1]):
         # train on simulated environment
-        env = SimulatedLatentSpaceEnv(env, pred, vae)
-        eval_env = LatentSpaceEnv(eval_env, vae)
-        train_dqn_agent(env, eval_env, rand_seed)
+        #env = SimulatedLatentSpaceEnv(env, pred, vae)
+        #eval_env = LatentSpaceEnv(eval_env, vae)
+        #train_dqn_agent(env, eval_env, rand_seed)
 
         # train on latent space env
         #env = LatentSpaceEnv(env, vae)

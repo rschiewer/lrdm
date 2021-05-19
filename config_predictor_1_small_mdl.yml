@@ -1,8 +1,8 @@
-pred_n_train_steps: 8000
+pred_n_train_steps: 10000
 pred_n_steps_per_epoch: 50
 pred_n_trajectories: 6000
 pred_n_traj_steps: 20
-pred_n_warmup_steps: 1
+pred_n_warmup_steps: 4
 pred_pad_trajectories: True
 pred_det_filters: 64
 pred_prob_filters: 64
@@ -11,5 +11,5 @@ pred_n_models: 1
 pred_batch_size: 128
 pred_tb_log: False
 pred_use_env_idx: True
-pred_weights_path: 'predictor_models/'
-pred_train_stats_path: 'predictor_models/train_stats/'
+pred_weights_path: 'predictor_models/small/'
+pred_train_stats_path: 'predictor_models/small/train_stats/'

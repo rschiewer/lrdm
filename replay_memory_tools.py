@@ -161,6 +161,7 @@ def build_trajectory_from_position_images(traj, actions, condensed_mem, max_diff
 
     # start to build reconstruct trajectory
     observations = []
+    traj_finished = False
     for a in actions:
         if a == 0:
             new_pos = pos_current + [0, 1]
@@ -179,7 +180,16 @@ def build_trajectory_from_position_images(traj, actions, condensed_mem, max_diff
             pos_current = new_pos
             i_current = i_new
             assert condensed_env_mem[i_current]['env'] == i_env
-        observations.append(condensed_env_mem[i_current]['s_'])
+
+        if traj_finished:
+            add_obs = np.zeros_like(condensed_env_mem[i_current]['s_'])
+        else:
+            add_obs = condensed_env_mem[i_current]['s_']
+
+        if condensed_env_mem[i_current]['done']:
+            traj_finished = True
+
+        observations.append(add_obs)
 
     return i_env, np.array(observations)
 

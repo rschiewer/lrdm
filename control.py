@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 from replay_memory_tools import cast_and_normalize_images
-from tools import ValueHistory
+from tools import ValueHistory, trajectory_video, cast_and_unnormalize_images
 
 
-def plan(predictor, prev_dist_params, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
+def plan(predictor, vae, prev_dist_params, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
          n_iterations, top_perc, gamma, action_noise, env_name, neptune_run, debug_plot=False):
     """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
     https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
@@ -56,13 +56,13 @@ def plan(predictor, prev_dist_params, preprocessed_start_samples, preprocessed_s
         if debug_plot:
             done_idxs = tf.math.argmax(top_dones, axis=1)
             term_gammas = tf.gather(top_dones, done_idxs[..., tf.newaxis], batch_dims=1)
-            traj_lengths = tf.where(term_gammas[:, 0] > 0.9, done_idxs + 1, plan_steps)
+            traj_lengths = tf.where(term_gammas[:, 0] > 0.8, done_idxs + 1, plan_steps)
             print(f'Top returns are: {top_returns}')
             print(f'Trajectory lengths: {traj_lengths}')
             ax0.plot(top_returns.numpy(), label=f'iteration_{i_iter}')
             ax1.plot(traj_lengths.numpy(), label=f'iteration_{i_iter}')
             #print(f'Top first action: {top_a_sequence[0, 0, 0]}')
-            #trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
+            trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
 
         # MLE for categorical, see
         # https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
@@ -185,9 +185,10 @@ def control(predictor, vae, env, env_info, env_name, plan_steps=50, warmup_steps
             preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
             preprocessed_start_samples = vae.encode_to_indices(preprocessed_start_samples)
             preprocessed_start_actions = tf.cast(act_history.to_numpy(), tf.int32)
-            actions, previous_dist_params = plan(predictor, previous_dist_params, preprocessed_start_samples,
+            actions, previous_dist_params = plan(predictor, vae, previous_dist_params, preprocessed_start_samples,
                                                  preprocessed_start_actions, env_info['n_actions'],
-                           plan_steps, n_rollouts, n_iterations, top_perc, gamma, action_noise, env_name, neptune_run)
+                                                 plan_steps, n_rollouts, n_iterations, top_perc, gamma, action_noise,
+                                                 env_name, neptune_run, debug_plot=False)
             available_actions.extend([a for a in actions.numpy()[:consecutive_actions]])
 
 

@@ -42,8 +42,8 @@ if __name__ == '__main__':
     pred.load_weights(predictor_weights_path)
 
     # prediction block diagram
-    plot_env_per_sample(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
-    #check_traj_correctness(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
+    plot_env_per_sample(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.2, rand_seed=42)
+    check_traj_correctness(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
 
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)

@@ -29,6 +29,11 @@ if __name__ == '__main__':
     #                                pad_short_trajectories=CONFIG.pred_pad_trajectories)
     trajs = extract_subtrajectories_unbiased(mix_memory, CONFIG.pred_n_trajectories,
                                              CONFIG.pred_n_traj_steps)
+    #for t in trajs:
+    #    print(t['done'])
+    #    print(t['r'])
+    #    trajectory_video([t['s'], t['s_']], ['s', 's_'], interval=200)
+
     train_data_var = np.var(mix_memory['s'][0] / 255)
     del mix_memory  # conserve memory
 

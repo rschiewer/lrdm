@@ -1,4 +1,4 @@
-pred_n_train_steps: 8000
+pred_n_train_steps: 10000
 pred_n_steps_per_epoch: 50
 pred_n_trajectories: 6000
 pred_n_traj_steps: 30

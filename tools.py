@@ -6,6 +6,7 @@ from typing import Union, List
 import blockworld
 import gym_minigrid
 import yaml
+import neptune.new as neptune
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from yamldataclassconfig import YamlDataClassConfig
 
@@ -13,6 +14,7 @@ from keras_vq_vae import VectorQuantizerEMAKeras
 from predictors import RecurrentPredictor
 from neptune.new.integrations.tensorflow_keras import NeptuneCallback
 from replay_memory_tools import *
+
 
 from gym import spaces
 from gym import ObservationWrapper
@@ -374,7 +376,7 @@ def detect_env_per_sample(pred, vae, mem, batch_size, traj_len, max_diff, rand_s
     return np.array(closest_env_indices), np.array(env_weights)
 
 
-def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed):
+def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed, run):
     indices, weights = detect_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed)
     n_envs = len(indices)
     timestep_labels = range(len(indices[0, 0]))
@@ -391,17 +393,21 @@ def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, 
             return indices_per_step
 
         per_timestep = count_indices_per_step(indices[i_env], n_envs)
+        fig = plt.figure()
         for plot_i_env in range(n_envs):
             bottom = per_timestep[:, 0:plot_i_env].sum(axis=1)
-            plt.bar(timestep_labels, per_timestep[:, plot_i_env], bar_width, bottom=bottom, label=plot_i_env)
+            plt.bar(timestep_labels, per_timestep[:, plot_i_env], bar_width, bottom=bottom, label=f'Task {plot_i_env + 1}')
         bottom = per_timestep[:, 0:-1].sum(axis=1)
         plt.bar(timestep_labels, per_timestep[:, -1], bar_width, bottom=bottom, label='undefined')
         plt.ylim(bottom=0, top=indices.shape[1] + 1)
         plt.legend()
+        plt.suptitle(f'Rollouts Task {i_env + 1}')
         plt.show()
+        if run:
+            run[f'predictor_allocation_{i_env}'] = neptune.types.File.as_image(fig)
 
 
-def check_traj_correctness(pred, vae, mem, n_trajs, n_time_steps, max_diff, rand_seed):
+def check_traj_correctness(pred, vae, mem, n_trajs, n_time_steps, max_diff, rand_seed, run):
     _, _, _, predicted_decoded, actions, _, _, chosen_pred = generate_test_rollouts(pred, mem, vae, n_time_steps, 1, n_trajs, rand_seed)
     condensed_mem = condense_places_in_mem(mem)
     traj_differences = []
@@ -418,10 +424,14 @@ def check_traj_correctness(pred, vae, mem, n_trajs, n_time_steps, max_diff, rand
     env_1_traj_differences = traj_differences[env_indices == 1]
     env_2_traj_differences = traj_differences[env_indices == 2]
 
+    fig = plt.figure()
     plt.bar(['env 0', 'env 1', 'env 2'],
             [env_0_traj_differences.mean(), env_1_traj_differences.mean(), env_2_traj_differences.mean()], 0.35,
             yerr=[env_0_traj_differences.std(), env_1_traj_differences.std(), env_2_traj_differences.std()])
     plt.show()
+
+    if run:
+        run[f'trajectory_correctness'] = neptune.types.File.as_image(fig)
 
     #debug_visualize_observation_sequence(trajectory)
 

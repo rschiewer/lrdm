@@ -400,8 +400,10 @@ def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, 
         bottom = per_timestep[:, 0:-1].sum(axis=1)
         plt.bar(timestep_labels, per_timestep[:, -1], bar_width, bottom=bottom, label='undefined')
         plt.ylim(bottom=0, top=indices.shape[1] + 1)
+        plt.ylabel('Sample')
+        plt.xlabel('Time Step')
         plt.legend()
-        plt.suptitle(f'Rollouts Task {i_env + 1}')
+        plt.suptitle(f'Task {i_env + 1}')
         plt.show()
         if run:
             run[f'predictor_allocation_{i_env}'] = neptune.types.File.as_image(fig)

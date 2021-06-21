@@ -223,7 +223,7 @@ class RecurrentPredictor(keras.Model):
         if training:
             return 1
         else:
-            return 0.01
+            return 0.1  # was 0.01
 
     def _conv_lstm_start_states(self, n_batch, lstm_shape):
         return [tf.fill((n_batch, *lstm_shape), 0.0), tf.fill((n_batch, *lstm_shape), 0.0)]

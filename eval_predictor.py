@@ -3,6 +3,9 @@ from project_init import *
 from project_init import gen_mix_mem_path, gen_vae_weights_path, gen_predictor_weights_path
 import neptune.new as neptune
 from tools import plot_env_per_sample
+import seaborn as sns
+
+sns.set_theme(palette='muted')
 
 
 if __name__ == '__main__':
@@ -41,10 +44,6 @@ if __name__ == '__main__':
                          tf_eager_mode=CONFIG.tf_eager_mode)
     pred.load_weights(predictor_weights_path)
 
-    # prediction block diagram
-    plot_env_per_sample(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.2, rand_seed=42)
-    check_traj_correctness(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42)
-
     if CONFIG.neptune_project_name:
         run = neptune.init(project=CONFIG.neptune_project_name)
         run['parameters'] = {k: v for k, v in vars(CONFIG).items() if k.startswith('pred_')}
@@ -55,10 +54,16 @@ if __name__ == '__main__':
     else:
         run = None
 
-    for i_env, name in enumerate(env_names):
-        fig = predictor_allocation_stability(pred, mix_memory, vae, i_env)
-        if run:
-            run[f'predictor_allocation_{name}'] = neptune.types.File.as_image(fig)
+    # prediction block diagram
+    sns.set_context(rc={'patch.linewidth': 0.0})
+    #plot_env_per_sample(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.2, rand_seed=0, run=run)
+    #quit()
+    check_traj_correctness(pred, vae, mix_memory, n_trajs=64, n_time_steps=50, max_diff=0.1, rand_seed=42, run=run)
+
+    #for i_env, name in enumerate(env_names):
+    #    fig = predictor_allocation_stability(pred, mix_memory, vae, i_env)
+    #    if run:
+    #        run[f'predictor_allocation_{name}'] = neptune.types.File.as_image(fig)
 
     # some rollout videos
     targets_obs, targets_r, targets_done, o_rollout, actions, r_rollout, done_rollout, w_predictors =\

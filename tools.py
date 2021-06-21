@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Union, List
 
 import blockworld
+import vizdoomgym
 import gym_minigrid
 import yaml
 import neptune.new as neptune
@@ -18,6 +19,7 @@ from replay_memory_tools import *
 
 from gym import spaces
 from gym import ObservationWrapper
+from gym.wrappers import ResizeObservation
 import cv2
 
 from replay_memory_tools import condense_places_in_mem, find_closest_match_obs
@@ -84,7 +86,8 @@ class FixedSizePixelObs(ObservationWrapper):
 
 
 def gen_environments(test_setting):
-    b = blockworld.Blockworld
+    _ = blockworld
+    _ = vizdoomgym
     if test_setting == 'gridworld_3_rooms':
         env_names = ['Gridworld-partial-room-v0', 'Gridworld-partial-room-v1', 'Gridworld-partial-room-v2']
         environments = [gym.make(env_name) for env_name in env_names]
@@ -136,6 +139,13 @@ def gen_environments(test_setting):
                                                           lambda obs: obs['image']) for env_name in env_names]
         obs_shape = environments[0].observation_space['image'].shape
         obs_dtype = environments[0].observation_space['image'].dtype
+        n_actions = environments[0].action_space.n
+        act_dtype = environments[0].action_space.dtype
+    elif test_setting == 'vizdoom':
+        env_names = ['VizdoomBasic-v0', 'VizdoomTakeCover-v0']
+        environments = [ResizeObservation(gym.make(env_name), (64, 64)) for env_name in env_names]
+        obs_shape = environments[0].observation_space.shape
+        obs_dtype = environments[0].observation_space.dtype
         n_actions = environments[0].action_space.n
         act_dtype = environments[0].action_space.dtype
     else:
@@ -380,7 +390,7 @@ def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, 
     indices, weights = detect_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, rand_seed)
     n_envs = len(indices)
     timestep_labels = range(len(indices[0, 0]))
-    bar_width = 0.5
+    bar_width = 0.8
     for i_env in range(n_envs):
         def count_indices_per_step(indices, n_envs):
             time_steps = indices.shape[1]
@@ -404,7 +414,12 @@ def plot_env_per_sample(pred, vae, mix_memory, n_trajs, n_time_steps, max_diff, 
         plt.xlabel('Time Step')
         plt.legend()
         plt.suptitle(f'Task {i_env + 1}')
-        plt.show()
+        if run['parameters']['pred_n_models'].fetch() == 1:
+            model_name = 'mono'
+        else:
+            model_name = 'multi'
+        plt.savefig(f'rollouts {model_name} task {i_env + 1}', dpi=300)
+        #plt.show()
         if run:
             run[f'predictor_allocation_{i_env}'] = neptune.types.File.as_image(fig)
 

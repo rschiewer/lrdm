@@ -8,6 +8,7 @@ import numpy as np
 import numpy.lib.recfunctions as rfn
 from tools import cast_and_normalize_images, cast_and_unnormalize_images, ValueHistory, prepare_predictor_data, ExperimentConfig
 from replay_memory_tools import line_up_observations
+import matplotlib.pyplot as plt
 
 
 class ReplayMemory:
@@ -214,16 +215,14 @@ class SplitPlanAgent:
         custom_fields = [('env', np.int32)]
         self.memory = ReplayMemory(mem_size, obs_shape, custom_fields=custom_fields)
 
-    def plan(self, obs_history, act_history, n_actions, plan_steps, n_rollouts, n_iterations, top_perc, gamma):
+    def plan(self, preprocessed_start_samples, preprocessed_start_actions, n_actions, plan_steps, n_rollouts,
+             n_iterations, top_perc, gamma, action_noise, env_name, neptune_run, debug_plot=False):
         """Crossentropy method, see algorithm 2.2 from https://people.smp.uq.edu.au/DirkKroese/ps/CEopt.pdf,
         https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
         and https://towardsdatascience.com/cross-entropy-method-for-reinforcement-learning-2b6de2a4f3a0
         """
 
         # add axis for batch dim when encoding
-        preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
-        preprocessed_start_samples = self.vae.encode_to_indices(preprocessed_start_samples)
-        preprocessed_start_actions = tf.cast(act_history.to_numpy(), tf.int32)
         # add axis for batch, then repeat n_rollouts times along batch dimension
         o_hist = tf.repeat(preprocessed_start_samples[tf.newaxis, ...], repeats=[n_rollouts], axis=0)
         a_hist = tf.repeat(preprocessed_start_actions[tf.newaxis, :, tf.newaxis], repeats=[n_rollouts], axis=0)
@@ -233,6 +232,9 @@ class SplitPlanAgent:
 
         assert n_iterations > 0, f'Number of iterations must be geater than 0 but is {n_iterations}'
 
+        per_predictor_weights = []
+        if debug_plot:
+            fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10, 6))
         for i_iter in range(n_iterations):
             # generate one action vector per rollout trajectory (we generate n_rollouts trajectories)
             # each timestep has the same parameters for all rollouts (so we need plan_steps * n_actions parameters)
@@ -241,6 +243,7 @@ class SplitPlanAgent:
 
             o_pred, r_pred, done_pred, pred_weights = self.predictor([o_hist, a_in])
 
+            # make sure trajectory ends after reward was collected once
             done_mask = tf.concat([tf.zeros((n_rollouts, 1), dtype=tf.float32), done_pred[:, :-1, 0]], axis=1)
             discount_factors = tf.map_fn(
                 lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma * (1 - elem), d_traj,
@@ -249,8 +252,22 @@ class SplitPlanAgent:
             )
 
             discounted_returns = tf.reduce_sum(discount_factors * r_pred[:, :, 0], axis=1)
+            # returns = tf.reduce_sum(processed_r_pred, axis=1)
+
             top_returns, top_i_a_sequence = tf.math.top_k(discounted_returns, k=k)
             top_a_sequence = tf.gather(a_new, top_i_a_sequence)
+            top_dones = tf.gather(done_pred[:, :, 0], top_i_a_sequence)
+
+            if debug_plot:
+                done_idxs = tf.math.argmax(top_dones, axis=1)
+                term_gammas = tf.gather(top_dones, done_idxs[..., tf.newaxis], batch_dims=1)
+                traj_lengths = tf.where(term_gammas[:, 0] > 0.9, done_idxs + 1, plan_steps)
+                print(f'Top returns are: {top_returns}')
+                print(f'Trajectory lengths: {traj_lengths}')
+                ax0.plot(top_returns.numpy(), label=f'iteration_{i_iter}')
+                ax1.plot(traj_lengths.numpy(), label=f'iteration_{i_iter}')
+                # print(f'Top first action: {top_a_sequence[0, 0, 0]}')
+                # trajectory_video(cast_and_unnormalize_images(vae.decode_from_indices(o_pred[top_i_a_sequence[0], tf.newaxis, ...])), ['best sequence'])
 
             # MLE for categorical, see
             # https://math.stackexchange.com/questions/2725539/maximum-likelihood-estimator-of-categorical-distribution
@@ -261,7 +278,32 @@ class SplitPlanAgent:
             denominator = tf.reduce_sum(top_a_sequence_onehot, axis=[0, 2])[..., tf.newaxis]
             dist_params = numerator / denominator
 
+            if action_noise:
+                dist_params += tf.random.normal(tf.shape(dist_params), 0, action_noise)
+                dist_params = tf.clip_by_value(dist_params, 0, 1)
+                dist_params /= tf.reduce_sum(dist_params, axis=-1, keepdims=True)
+
+            # logging
+            per_predictor = tf.reduce_mean(pred_weights, axis=[1, 2])
+            per_predictor_weights.append(per_predictor)
+
+        if neptune_run:
+            w_per_pred = tf.reduce_mean(per_predictor_weights, axis=[0]).numpy()
+            for i_pred, w_pred in enumerate(w_per_pred):
+                neptune_run[f'{env_name}/w_planning/pred_{i_pred}'].log(w_pred)
+            neptune_run[f'{env_name}/best_action_sequence'].log(top_a_sequence[0, :, 0].numpy())
+
+        if debug_plot:
+            fig.suptitle(f'Top {k} planning rollouts')
+            ax0.set_ylabel('return')
+            ax1.set_ylabel('trajectory length')
+            ax0.set_xlabel('trajectory index')
+            ax1.set_xlabel('trajectory index')
+            plt.legend()
+            plt.show()
+
         return top_a_sequence[0, :, 0]  # take best guess from last iteration and remove redundant dimension
+        # return tfp.distributions.Categorical(probs=dist_params).sample(1)[..., tf.newaxis]
 
     def train(self, env, i_env, steps):
         i_episode = 0
@@ -280,11 +322,14 @@ class SplitPlanAgent:
                     if i_step < self.exploration_steps:
                         available_actions.append(env.action_space.sample())
                     else:
-                        actions = self.plan(obs_history, act_history, self.n_actions, self.config.ctrl_n_plan_steps,
-                                        self.config.ctrl_n_rollouts, self.config.ctrl_n_iterations,
-                                        self.config.ctrl_top_perc, self.config.ctrl_gamma)
-                        act_list = actions.numpy().tolist()
-                        available_actions.extend(act_list[0: self.config.ctrl_n_plan_steps])
+                        preprocessed_start_samples = cast_and_normalize_images(obs_history.to_numpy())
+                        preprocessed_start_samples = self.vae.encode_to_indices(preprocessed_start_samples)
+                        preprocessed_start_actions = tf.cast(act_history.to_numpy(), tf.int32)
+                        actions = self.plan(preprocessed_start_samples, preprocessed_start_actions, self.n_actions,
+                                            self.config.ctrl_n_plan_steps, self.config.ctrl_n_rollouts,
+                                            self.config.ctrl_n_iterations, self.config.ctrl_top_perc,
+                                            self.config.ctrl_gamma, self.config.ctrl_act_noise, f'env{i_env}', None)
+                        available_actions.extend([a for a in actions.numpy()[:self.config.ctrl_consecutive_actions]])
 
                 # choose first action
                 action = available_actions.pop(0)

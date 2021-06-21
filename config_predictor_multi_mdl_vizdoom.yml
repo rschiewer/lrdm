@@ -4,9 +4,9 @@ pred_n_trajectories: 6000
 pred_n_traj_steps: 30
 pred_n_warmup_steps: 5
 pred_pad_trajectories: True
-pred_det_filters: 128
-pred_prob_filters: 128
-pred_decider_lw: 64
+pred_det_filters: 210
+pred_prob_filters: 210
+pred_decider_lw: 100
 pred_n_models: 2
 pred_batch_size: 32
 pred_tb_log: False

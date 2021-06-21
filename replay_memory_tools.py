@@ -303,6 +303,7 @@ def gen_data(envs, env_info, samples_per_env, file_paths=None):
     if file_paths:
         for path, mem in zip(file_paths, memories):
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            print(f'Memory size: {mem.nbytes/1024/1024}')
             with open(path, 'wb+') as handle:
                 np.save(handle, mem, allow_pickle=False)
 

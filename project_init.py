@@ -4,6 +4,7 @@ from yamldataclassconfig.config import YamlDataClassConfig
 from pathlib import Path
 import tensorflow as tf
 from tools import ExperimentConfig
+import seaborn as sns
 
 # check if all directories for logging and storing stuff exist, generate if not present
 #for k, v in vars(CONFIG).items():
@@ -28,7 +29,7 @@ if gpus:
 
 
 CONFIG = ExperimentConfig()
-CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_1_small_mdl.yml', 'config_vae.yml'])
+CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_1_mdl.yml', 'config_vae.yml'])
 
 
 tf.config.run_functions_eagerly(CONFIG.tf_eager_mode)

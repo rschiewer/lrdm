@@ -8,7 +8,7 @@ pred_det_filters: 210
 pred_prob_filters: 210
 pred_decider_lw: 100
 pred_n_models: 2
-pred_batch_size: 32
+pred_batch_size: 16
 pred_tb_log: False
 pred_use_env_idx: True
 pred_weights_path: 'predictor_models/medium/'

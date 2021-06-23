@@ -29,7 +29,7 @@ if gpus:
 
 
 CONFIG = ExperimentConfig()
-CONFIG.load(['config_general.yml', 'config_control.yml', 'config_predictor_1_mdl.yml', 'config_vae.yml'])
+CONFIG.load(['config_general.yml', 'config_control_vizdoom.yml', 'config_predictor_multi_mdl_vizdoom.yml', 'config_vae.yml'])
 
 
 tf.config.run_functions_eagerly(CONFIG.tf_eager_mode)

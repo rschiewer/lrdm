@@ -1,6 +1,6 @@
-pred_n_train_steps: 20000
+pred_n_train_steps: 25000
 pred_n_steps_per_epoch: 50
-pred_n_trajectories: 6000
+pred_n_trajectories: 10000
 pred_n_traj_steps: 30
 pred_n_warmup_steps: 5
 pred_pad_trajectories: True

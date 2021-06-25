@@ -1,6 +1,6 @@
 vae_n_train_steps: 40000
 vae_n_steps_per_epoch: 200
-vae_batch_size: 512
+vae_batch_size: 256
 vae_commitment_cost: 0.35
 vae_decay: 0.99
 vae_n_embeddings: 64

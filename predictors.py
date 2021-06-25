@@ -395,11 +395,11 @@ class RecurrentPredictor(keras.Model):
 
         if training:
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
-            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).sample()
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 20).sample()
         else:
             most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
-            o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32) # + tf.stop_gradient(o_pred) - o_pred
-            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=params_r[..., 1, tf.newaxis]).mode()
+            o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32)
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 20).mode()
 
         terminal_pred = terminal_mdl(h, training=training)
 

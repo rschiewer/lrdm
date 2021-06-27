@@ -1,0 +1,10 @@
+tf_eager_mode: False
+model_summaries: False
+neptune_project_name: 'rschiewer/predictor'
+
+env_setting: 'vizdoom' #'gridworld_3_rooms_rand_starts'
+env_n_samples_per_env: 200000 #40000
+env_mix_memory_fraction: 1.0
+env_sample_mem_path_stub: 'samples/raw/'
+env_mix_mem_path_stub: 'samples/mix/'
+env_name_concat: '_and_'

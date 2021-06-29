@@ -118,9 +118,13 @@ class RecurrentPredictor(keras.Model):
     def _gen_params_r(self, h_out_shape, prob_filters):
         # stochastic model to implement p(r_t+1 | o_t, a_t, h_t)
         in_h = layers.Input((None, *h_out_shape), name='p_r_in')
-        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2,2), kernel_size=4, padding='SAME', activation=None))(in_h)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2, 2), kernel_size=7, padding='SAME', activation=None))(in_h)
         x_params_r = layers.ReLU()(x_params_r)
-        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(2,2), kernel_size=3, padding='SAME', activation=None))(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2, 2), kernel_size=5, padding='SAME', activation=None))(x_params_r)
+        x_params_r = layers.ReLU()(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(2, 2), kernel_size=4, padding='SAME', activation=None))(x_params_r)
+        x_params_r = layers.ReLU()(x_params_r)
+        x_params_r = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(1, 1), kernel_size=3, padding='SAME', activation=None))(x_params_r)
         x_params_r = layers.ReLU()(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Flatten())(x_params_r)
         x_params_r = layers.TimeDistributed(layers.Dense(prob_filters, activation=None))(x_params_r)
@@ -135,9 +139,13 @@ class RecurrentPredictor(keras.Model):
     def _terminal(self, h_out_shape, prob_filters):
         # stochastic model to implement p(done_t+1 | o_t, a_t, h_t)
         in_h = layers.Input((None, *h_out_shape), name='p_terminal_in')
-        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2, 2), kernel_size=4, padding='SAME', activation=None))(in_h)
+        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2, 2), kernel_size=7, padding='SAME', activation=None))(in_h)
         x_params_terminal = layers.ReLU()(x_params_terminal)
-        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(2, 2), kernel_size=3, padding='SAME', activation=None))(x_params_terminal)
+        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters, strides=(2, 2), kernel_size=5, padding='SAME', activation=None))(in_h)
+        x_params_terminal = layers.ReLU()(x_params_terminal)
+        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(2, 2), kernel_size=4, padding='SAME', activation=None))(x_params_terminal)
+        x_params_terminal = layers.ReLU()(x_params_terminal)
+        x_params_terminal = layers.TimeDistributed(layers.Conv2D(prob_filters // 2, strides=(1, 1), kernel_size=3, padding='SAME', activation=None))(x_params_terminal)
         x_params_terminal = layers.ReLU()(x_params_terminal)
         x_params_terminal = layers.TimeDistributed(layers.Flatten())(x_params_terminal)
         x_params_terminal = layers.TimeDistributed(layers.Dense(prob_filters, activation=None))(x_params_terminal)
@@ -395,11 +403,11 @@ class RecurrentPredictor(keras.Model):
 
         if training:
             o_pred = tfd.RelaxedOneHotCategorical(self._temp(training), logits=params_o).sample()
-            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 20).sample()
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 30).sample()
         else:
             most_probable = tf.argmax(params_o, axis=-1, output_type=tf.int32)
             o_pred = tf.one_hot(most_probable, self._vqvae.num_embeddings, axis=-1, dtype=tf.float32)
-            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 20).mode()
+            r_pred = tfd.Normal(loc=params_r[..., 0, tf.newaxis], scale=tf.nn.sigmoid(params_r[..., 1, tf.newaxis]) * 30).mode()
 
         terminal_pred = terminal_mdl(h, training=training)
 
@@ -441,13 +449,6 @@ class RecurrentPredictor(keras.Model):
             r_predictions = r_predictions[0]
             terminal_predictions = terminal_predictions[0]
         return o_predictions, r_predictions, terminal_predictions
-
-    def n_trainable_weights(self):
-        vqvae_is_trainable = self._vqvae.trainable
-        self._vqvae.trainable = False
-        n_weights = len(self.trainable_weights)
-        self._vqvae.trainable = vqvae_is_trainable
-        return n_weights
 
     @tf.function
     def train_step(self, data):
@@ -513,16 +514,11 @@ class RecurrentPredictor(keras.Model):
                     curr_mdl_terminal_err = tf.reduce_mean(tf.losses.binary_crossentropy(terminal_groundtruth, terminal_pred) * i_env[:, :, i])
                     curr_mdl_pred_err = curr_mdl_obs_err + curr_mdl_r_err + curr_mdl_terminal_err
 
-                    #curr_mdl_div_loss = 0#0.002 / self.n_models * np.prod(self._h_out_shape) * tf.reduce_mean(tf.math.multiply((w_predictor + 1E-5), tf.math.log(w_predictor + 1E-5)))  # regularization to incentivize picker to not let a predictor starve
-                    #curr_mdl_stab_loss = 0#0.001 / self.n_models * np.prod(self._h_out_shape) * tf.reduce_mean(tf.abs(w_predictor[1:] - w_predictor[:-1]))  # regularization to incentivize picker to not switch predictors too often
-
-                    total_loss += curr_mdl_pred_err #+ curr_mdl_div_loss + curr_mdl_stab_loss
+                    total_loss += curr_mdl_pred_err
 
                     total_obs_err += curr_mdl_obs_err
                     total_r_err += curr_mdl_r_err
                     total_terminal_err += curr_mdl_terminal_err
-                    #total_diversity_loss += curr_mdl_div_loss
-                    #total_stability_loss += curr_mdl_stab_loss
             else:
                 o_pred = o_predictions[0]
                 r_pred = r_predictions[0]
@@ -542,32 +538,6 @@ class RecurrentPredictor(keras.Model):
             picker_choices = tf.transpose(w_predictors, [1, 2, 0])
             picker_loss = tf.reduce_mean(tf.losses.categorical_crossentropy(i_env, picker_choices) * use_i_env)
             total_loss += picker_loss
-
-            n_batch = tf.shape(x[0])[0]
-            n_warmup = tf.shape(x[0])[1]
-            n_predict = tf.shape(x[1])[1]
-
-            #gamma = 0.95
-            #finite_w_diff = tf.abs(w_predictors[:, :, 1:] - w_predictors[:, :, :1])
-            #discount = tf.ones_like(finite_w_diff[0])
-            #discount_1 = tf.map_fn(
-            #    lambda d_traj: tf.scan(lambda cumulative, elem: cumulative * gamma, d_traj, initializer=1.0),
-            #    discount#[:, n_warmup:]
-            #)
-            #finite_w_diff *= tf.stack([discount_1 for _ in range(self.n_models)])
-            #total_stability_loss = 0.1 * np.prod(self.belief_state_shape) * tf.reduce_mean(finite_w_diff)
-
-            # stability loss
-            total_stability_loss = 0.01 * tf.reduce_mean(tf.abs(w_predictors[1:] - w_predictors[:-1]))
-
-            # diversity loss
-            avg_pred_probs = tf.reduce_mean(w_predictors[:, :, 0], axis=[1])
-            ideal = tf.ones_like(avg_pred_probs) / self.n_models
-            total_diversity_loss = tf.reduce_mean(tf.abs(avg_pred_probs - ideal))
-
-            #total_loss += total_diversity_loss + total_stability_loss
-            #total_loss += total_stability_loss
-
 
         # Compute gradients
         gradients = tape.gradient(total_loss, self.trainable_weights)

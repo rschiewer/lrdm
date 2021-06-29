@@ -233,12 +233,10 @@ def blockworld_position_images(mem):
         if added_places == gallery_size:
             break
 
-
     return gallery, n_envs, env_sizes
 
 
-
-def _run_env(env, n_samples, idx):
+def _run_env(env, test_setting, n_samples, idx):
     print(f'Starting environment {idx + 1}')
     memory = []
 
@@ -256,6 +254,9 @@ def _run_env(env, n_samples, idx):
                 player_pos = env.agent_pos
             else:
                 player_pos = (-42, -42)
+
+            if test_setting == 'vizdoom':  # hacky reward normalization for vizdoom
+                reward /= 100
 
             memory.append((last_observation, action, reward, observation, done, player_pos, idx))
 
@@ -278,6 +279,7 @@ def _run_env(env, n_samples, idx):
 def gen_data(envs, env_info, samples_per_env, file_paths=None):
     obs_shape = env_info['obs_shape']
     obs_dtype = env_info['obs_dtype']
+    test_setting = env_info['test_setting']
     for env in envs:
         assert type(env.action_space) is gym.spaces.Discrete, f'Environment {env} doesn\'t have discrete action space'
 
@@ -285,7 +287,7 @@ def gen_data(envs, env_info, samples_per_env, file_paths=None):
 
     # Collect samples from environment
     for idx, env in enumerate(envs):
-        memories.append(_run_env(env, samples_per_env, idx))
+        memories.append(_run_env(env, test_setting, samples_per_env, idx))
 
     # Make numpy arrays out of data
     arr_dtype = np.dtype([('s', obs_dtype, obs_shape),

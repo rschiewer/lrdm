@@ -5,6 +5,7 @@ from typing import Union, List
 
 import blockworld
 import vizdoomgym
+import vizdoom
 import gym_minigrid
 import yaml
 import neptune.new as neptune
@@ -151,7 +152,8 @@ def gen_environments(test_setting):
     else:
         raise ValueError(f'Unknown test setting: {test_setting}')
 
-    env_info = {'obs_shape': obs_shape, 'obs_dtype': obs_dtype, 'n_actions': n_actions, 'act_dtype': act_dtype}
+    env_info = {'obs_shape': obs_shape, 'obs_dtype': obs_dtype, 'n_actions': n_actions, 'act_dtype': act_dtype,
+                'test_setting': test_setting}
     return env_names, environments, env_info
 
 

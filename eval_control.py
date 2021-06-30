@@ -59,9 +59,11 @@ if __name__ == '__main__':
 
     for i_run in range(CONFIG.ctrl_n_runs):
         for name, env in zip(env_names, envs):
+            if CONFIG.env_setting == 'vizdoom':
+                env.game.set_seed(i_run)
             print(f'Planning in {name}')
-            if name == 'Gridworld-partial-room-v7':
-                env.player_random_start = False
+            #if name == 'Gridworld-partial-room-v7':
+            #    env.player_random_start = False
             r, t = control(predictor=pred, vae=vae, env=env, env_info=env_info, env_name=name,
                            plan_steps=CONFIG.ctrl_n_plan_steps, warmup_steps=CONFIG.ctrl_n_warmup_steps,
                            n_rollouts=CONFIG.ctrl_n_rollouts, n_iterations=CONFIG.ctrl_n_iterations,
